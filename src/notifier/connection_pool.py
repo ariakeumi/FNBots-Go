@@ -163,6 +163,66 @@ class ConnectionPool:
         
         return None
     
+    def get(self, url: str) -> bool:
+        """
+        发送GET请求（用于Bark等GET类型的推送）
+        
+        Args:
+            url: 请求URL
+            
+        Returns:
+            请求是否成功
+        """
+        # 更新统计
+        with self.stats_lock:
+            self.stats.total_requests += 1
+        
+        try:
+            # 临时移除Content-Type头部以避免影响GET请求
+            original_content_type = self.session.headers.get('Content-Type')
+            if original_content_type:
+                del self.session.headers['Content-Type']
+            
+            response = self.session.get(
+                url,
+                timeout=self.timeout
+            )
+            
+            # 恢复Content-Type头部
+            if original_content_type:
+                self.session.headers['Content-Type'] = original_content_type
+            
+            if response.status_code < 400:
+                with self.stats_lock:
+                    self.stats.successful_requests += 1
+                return True
+            else:
+                self.logger.error(f"GET请求失败: {response.status_code}")
+                with self.stats_lock:
+                    self.stats.failed_requests += 1
+                return False
+                
+        except requests.exceptions.Timeout:
+            self.logger.error(f"请求超时: {url}")
+            with self.stats_lock:
+                self.stats.timeout_errors += 1
+                self.stats.failed_requests += 1
+        except requests.exceptions.ConnectionError:
+            self.logger.error(f"连接错误: {url}")
+            with self.stats_lock:
+                self.stats.connection_errors += 1
+                self.stats.failed_requests += 1
+        except requests.exceptions.HTTPError as e:
+            self.logger.error(f"HTTP错误: {e}")
+            with self.stats_lock:
+                self.stats.failed_requests += 1
+        except Exception as e:
+            self.logger.error(f"请求异常: {e}")
+            with self.stats_lock:
+                self.stats.failed_requests += 1
+        
+        return False
+    
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
         with self.stats_lock:

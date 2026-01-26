@@ -8,7 +8,7 @@ from src.config import Config
 from src.utils.logger import setup_logging
 from src.monitor.journal_watcher import JournalWatcher
 from src.monitor.event_processor import EventProcessor
-from src.notifier.wechat_notifier import WeChatNotifier
+from src.notifier.unified_notifier import UnifiedNotifier
 
 class Application:
     """主应用程序"""
@@ -27,7 +27,7 @@ class Application:
         banner = f"""
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         监控模式: 实时事件驱动 (支持journalctl和syslog)
-        通知方式: 企业微信机器人
+        通知方式: 企业微信/钉钉/飞书机器人/Bark
 
         """
         print(banner)
@@ -51,19 +51,24 @@ class Application:
             # 显示配置信息
             print(f"监控事件: {', '.join(self.config.monitor_events)}")
             print(f"日志级别: {self.config.log_level}")
+            print(f"去重窗口: {self.config.dedup_window}秒")
             print(f"连接池大小: {self.config.http_pool_size}")
-            print("-" * 60)
             
-            # 初始化通知器
-            print("正在初始化通知器...")
-            self.notifier = WeChatNotifier(
-                webhook_url=self.config.wechat_webhook_url,
-                dedup_window=self.config.dedup_window,
-                pool_size=self.config.http_pool_size,
-                retries=self.config.http_retry_count,
-                timeout=self.config.http_timeout
-            )
-            print("通知器初始化完成")
+            # 检查Webhook配置
+            if self.config.wechat_webhook_url:
+                print(f"企业微信Webhook: 已配置")
+            if self.config.dingtalk_webhook_url:
+                print(f"钉钉Webhook: 已配置")
+            if self.config.feishu_webhook_url:
+                print(f"飞书Webhook: 已配置")
+            
+            if not any([self.config.wechat_webhook_url, self.config.dingtalk_webhook_url, self.config.feishu_webhook_url]):
+                print("警告: 未配置任何Webhook URL，通知功能将不可用")
+            
+            # 初始化通知器 - 现在支持多平台
+            print("初始化多平台通知器...")
+            self.notifier = UnifiedNotifier(self.config)
+            print("多平台通知器初始化完成")
             
             # 初始化事件处理器
             print("正在初始化事件处理器...")
@@ -90,69 +95,64 @@ class Application:
             
             print(f"\n初始化完成，开始监控...")
             return True
-            
         except Exception as e:
-            print(f"初始化失败: {e}", file=sys.stderr)
+            print(f"初始化失败: {e}")
             import traceback
-            traceback.print_exc()  # 添加详细错误追踪
+            traceback.print_exc()
             return False
-    
-    def run(self):
-        """运行主程序"""
-        if not self.initialize():
-            # 发送启动失败通知
-            if self.notifier:
-                self.notifier.send_system_notification(
-                    'APP_ERROR',
-                    '应用初始化失败: 未知错误',
-                    {'hostname': socket.gethostname(), 'version': '1.0'}
-                )
-            sys.exit(1)
-        
-        self.running = True
-        
-        # 发送启动通知
-        if self.notifier:
-            print("正在发送启动通知...")
-            result = self.notifier.send_system_notification(
-                'APP_START',
-                '飞牛NAS日志监控系统已启动，开始监控系统事件',
-                {'hostname': socket.gethostname(), 'version': '1.0'}
-            )
-            print(f"启动通知发送结果: {result}")
-        
-        # 设置信号处理
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        
-        try:
-            # 启动日志监视
-            self.journal_watcher.start()
-            
-        except KeyboardInterrupt:
-            print("\n用户中断监控")
-        except Exception as e:
-            print(f"运行异常: {e}", file=sys.stderr)
-            # 发送异常通知
-            if self.notifier:
-                self.notifier.send_system_notification(
-                    'APP_ERROR',
-                    f'应用运行时发生异常: {str(e)}',
-                    {'hostname': socket.gethostname(), 'version': '1.0'}
-                )
-        finally:
-            self.shutdown()
     
     def _signal_handler(self, signum, frame):
         """信号处理器"""
-        print(f"\n收到停止信号 {signum}，正在关闭...")
+        print(f"\n接收到信号 {signum}，准备关闭应用...")
         self.running = False
-        if self.journal_watcher:
-            self.journal_watcher.stop()
+        # 不立即关闭，让应用正常关闭流程
+    
+    def run(self):
+        """运行应用"""
+        try:
+            if not self.initialize():
+                # 发送启动失败通知
+                if self.notifier:
+                    self.notifier.send_system_notification(
+                        'APP_ERROR',
+                        '应用初始化失败: 未知错误',
+                        {'hostname': socket.gethostname(), 'version': '1.0'}
+                    )
+                sys.exit(1)
+            
+            self.running = True
+            
+            # 发送启动通知
+            if self.notifier:
+                self.notifier.send_system_notification(
+                    'APP_START',
+                    '飞牛NAS日志监控系统已启动，开始监控系统事件',
+                    {'hostname': socket.gethostname(), 'version': '1.0'}
+                )
+            
+            # 设置信号处理
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
+            
+            # 启动监视器
+            if self.journal_watcher:
+                print("启动日志监视器...")
+                self.journal_watcher.start()
+            else:
+                print("无法启动日志监视器")
+            
+        except KeyboardInterrupt:
+            print("\\n接收到中断信号...")
+        except Exception as e:
+            print(f"运行时错误: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            self.shutdown()
     
     def shutdown(self):
         """关闭应用"""
-        print("\n正在关闭应用...")
+        print("\\n正在关闭应用...")
         
         # 发送停止通知
         if self.notifier:
@@ -169,7 +169,7 @@ class Application:
         # 关闭通知器
         if self.notifier:
             stats = self.notifier.get_stats()
-            print("\n运行统计:")
+            print("\\n运行统计:")
             print(f"  发送请求: {stats.get('request_count', 0)}")
             print(f"  成功通知: {stats.get('success_count', 0)}")
             print(f"  失败通知: {stats.get('error_count', 0)}")

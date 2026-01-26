@@ -63,6 +63,26 @@ def parse_log_line(line):
                 
                 print(f"[发现硬盘] 设备名: {name}, 型号: {model}, 序列号: {serial}, 时间: {timestamp}")
                 return True
+            
+            elif template == 'DiskWakeup':
+                # 磁盘唤醒
+                disk = event_data.get('disk', '未知磁盘')
+                model = event_data.get('model', '未知型号')
+                serial = event_data.get('serial', '未知序列号')
+                timestamp = extract_timestamp(line)
+                
+                print(f"[磁盘唤醒] 磁盘: {disk}, 型号: {model}, 序列号: {serial}, 时间: {timestamp}")
+                return True
+            
+            elif template == 'DiskSpindown':
+                # 磁盘休眠
+                disk = event_data.get('disk', '未知磁盘')
+                model = event_data.get('model', '未知型号')
+                serial = event_data.get('serial', '未知序列号')
+                timestamp = extract_timestamp(line)
+                
+                print(f"[磁盘休眠] 磁盘: {disk}, 型号: {model}, 序列号: {serial}, 时间: {timestamp}")
+                return True
                 
         except json.JSONDecodeError:
             pass  # 如果JSON解析失败，继续处理下一行
@@ -81,6 +101,29 @@ def parse_log_line(line):
                 timestamp = extract_timestamp(line)
                 
                 print(f"[错误] 应用: {display_name}, 崩溃异常退出, 时间: {timestamp}")
+                return True
+            
+            elif event_id == 'APP_UPDATE_FAILED':
+                # 应用更新失败
+                app_data = event_data.get('data', {})
+                display_name = app_data.get('DISPLAY_NAME', app_data.get('APP_NAME', '未知应用'))
+                timestamp = extract_timestamp(line)
+                
+                print(f"[错误] 应用: {display_name}, 更新失败, 时间: {timestamp}")
+                return True
+            
+            elif event_id == 'UPS_ONBATT_LOWBATT':
+                # UPS启动，切换到电池供电
+                timestamp = extract_timestamp(line)
+                
+                print(f"[警告] UPS启动，切换到电池供电，请注意电池电量, 时间: {timestamp}")
+                return True
+            
+            elif event_id == 'UPS_ONLINE':
+                # UPS启动，切换到市电供电
+                timestamp = extract_timestamp(line)
+                
+                print(f"[通知] UPS启动，切换到市电供电模式, 时间: {timestamp}")
                 return True
                 
         except json.JSONDecodeError:

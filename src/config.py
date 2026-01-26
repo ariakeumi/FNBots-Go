@@ -13,16 +13,21 @@ class Config:
     """应用配置"""
     
     # Webhook配置
-    wechat_webhook_url: str = ""
+    wechat_webhook_url: str = ""  # 企业微信Webhook URL
+    dingtalk_webhook_url: str = ""  # 钉钉Webhook URL
+    feishu_webhook_url: str = ""   # 飞书Webhook URL
+    bark_url: str = ""  # Bark推送URL
     
     # 监控配置
     monitor_events: List[str] = field(default_factory=lambda: [
-        "LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH"
+        "LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH",
+        "APP_UPDATE_FAILED", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+        "DiskWakeup", "DiskSpindown"
     ])
     
     # 日志配置
     log_level: str = "INFO"
-    log_dir: str = "/app/logs"
+    log_dir: str = "./logs"
     
     # 连接池配置
     http_pool_size: int = 10
@@ -32,10 +37,11 @@ class Config:
     
     # 系统路径配置
     journal_paths: List[str] = field(default_factory=lambda: [
+        "./test_logs/journal",  # 用于测试
         "/var/log/journal",
         "/run/log/journal"
     ])
-    cursor_dir: str = "/tmp/cursor"
+    cursor_dir: str = "./cursor"
     
     # 高级配置
     heartbeat_interval: int = 30
@@ -46,19 +52,56 @@ class Config:
     
     def __post_init__(self):
         """初始化后处理"""
+        # 首先从环境变量加载配置
         self._load_from_env()
-        self._load_from_file()
+        # 然后从配置文件加载，但仅当配置项未设置时才覆盖
+        self._load_from_file_skip_if_set()
         self._validate()
         self._ensure_directories()
+    
+    def _load_from_file_skip_if_set(self):
+        """从配置文件加载（可选），但跳过已设置的配置项"""
+        config_file = Path('/app/config/config.json')
+        if config_file.exists():
+            try:
+                with open(config_file, 'r') as f:
+                    data = json.load(f)
+                
+                # 覆盖配置 - 仅当当前值为空或默认值时才设置
+                for key, value in data.items():
+                    if hasattr(self, key):
+                        current_value = getattr(self, key)
+                        # 如果当前值是默认值（空字符串）或者是一个占位符，则用配置文件中的值替换
+                        if not current_value or (isinstance(value, str) and value.startswith('${') and value.endswith('}')):
+                            # 如果值是字符串且包含环境变量占位符，则进行替换
+                            if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                                env_var_name = value[2:-1]  # 提取变量名
+                                env_value = os.getenv(env_var_name, '')  # 获取环境变量值，不存在则为空字符串
+                                setattr(self, key, env_value)
+                            else:
+                                setattr(self, key, value)
+            except Exception as e:
+                print(f"警告: 配置文件读取失败 - {e}")
     
     def _load_from_env(self):
         """从环境变量加载配置"""
         # 端口配置（保留此行以兼容旧版本，但不实际使用）
         port = os.getenv('PORT')
         
-        # Webhook URL
-        if webhook := os.getenv('WECHAT_WEBHOOK_URL'):
+        # Webhook URLs
+        if wechat_webhook := os.getenv('WECHAT_WEBHOOK_URL'):
+            self.wechat_webhook_url = wechat_webhook
+        elif webhook := os.getenv('WEBHOOK_URL'):  # 兼容旧的环境变量名
             self.wechat_webhook_url = webhook
+        
+        if dingtalk_webhook := os.getenv('DINGTALK_WEBHOOK_URL'):
+            self.dingtalk_webhook_url = dingtalk_webhook
+        
+        if feishu_webhook := os.getenv('FEISHU_WEBHOOK_URL'):
+            self.feishu_webhook_url = feishu_webhook
+        
+        if bark_url := os.getenv('BARK_URL'):
+            self.bark_url = bark_url
         
         # 监控事件
         if events := os.getenv('MONITOR_EVENTS'):
@@ -89,7 +132,7 @@ class Config:
             self.file_check_interval = int(file_check)
         
         if max_age := os.getenv('MAX_LOG_AGE'):
-            self.max_log_age = int(max_age)
+            self.max_age = int(max_age)
     
     def _load_from_file(self):
         """从配置文件加载（可选）"""
@@ -102,23 +145,41 @@ class Config:
                 # 覆盖配置
                 for key, value in data.items():
                     if hasattr(self, key):
-                        setattr(self, key, value)
+                        # 如果值是字符串且包含环境变量占位符，则进行替换
+                        if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                            env_var_name = value[2:-1]  # 提取变量名
+                            env_value = os.getenv(env_var_name, '')  # 获取环境变量值，不存在则为空字符串
+                            setattr(self, key, env_value)
+                        else:
+                            setattr(self, key, value)
             except Exception as e:
                 print(f"警告: 配置文件读取失败 - {e}")
     
     def _validate(self):
         """验证配置"""
-        if not self.wechat_webhook_url:
-            raise ValueError("必须配置 WECHAT_WEBHOOK_URL")
+        # 至少需要配置一个Webhook URL
+        if not self.wechat_webhook_url and not self.dingtalk_webhook_url and not self.feishu_webhook_url and not self.bark_url:
+            raise ValueError("必须配置至少一个WebHook URL (WECHAT_WEBHOOK_URL, DINGTALK_WEBHOOK_URL, FEISHU_WEBHOOK_URL 或 BARK_URL)")
         
-        if not self.wechat_webhook_url.startswith('http'):
+        if self.wechat_webhook_url and not self.wechat_webhook_url.startswith('http'):
             raise ValueError("WECHAT_WEBHOOK_URL 必须是有效的URL")
+        
+        if self.dingtalk_webhook_url and not self.dingtalk_webhook_url.startswith('http'):
+            raise ValueError("DINGTALK_WEBHOOK_URL 必须是有效的URL")
+        
+        if self.feishu_webhook_url and not self.feishu_webhook_url.startswith('http'):
+            raise ValueError("FEISHU_WEBHOOK_URL 必须是有效的URL")
+        
+        if self.bark_url and not self.bark_url.startswith('http'):
+            raise ValueError("BARK_URL 必须是有效的URL")
         
         if not self.monitor_events:
             raise ValueError("必须配置至少一个监控事件")
         
         # 验证事件类型
-        valid_events = {"LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH"}
+        valid_events = {"LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH", 
+                        "APP_UPDATE_FAILED", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+                        "DiskWakeup", "DiskSpindown"}
         for event in self.monitor_events:
             if event not in valid_events:
                 raise ValueError(f"未知事件类型: {event}")
@@ -137,6 +198,6 @@ class Config:
             'log_level': self.log_level,
             'http_pool_size': self.http_pool_size,
             'dedup_window': self.dedup_window,
-            'webhook_url': self.wechat_webhook_url[:50] + '...' 
+            'wechat_webhook_url': self.wechat_webhook_url[:50] + '...' 
                 if len(self.wechat_webhook_url) > 50 else self.wechat_webhook_url
         }

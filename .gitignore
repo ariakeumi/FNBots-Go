@@ -26,10 +26,6 @@ venv/
 env/
 ENV/
 
-# Sensitive files
-.env
-.env.local
-.env.*.local
 
 # Data and logs
 data/

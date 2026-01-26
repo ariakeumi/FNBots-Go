@@ -1,11 +1,18 @@
 {
-  "wechat_webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=3b355a21-c5b9-47cb-86dd-7d7032871935",
+  "wechat_webhook_url": "${WECHAT_WEBHOOK_URL}",
+  "dingtalk_webhook_url": "${DINGTALK_WEBHOOK_URL}",
+  "feishu_webhook_url": "${FEISHU_WEBHOOK_URL}",
   "monitor_events": [
     "LoginSucc",
     "LoginSucc2FA1",
     "Logout",
     "FoundDisk",
-    "APP_CRASH"
+    "APP_CRASH",
+    "APP_UPDATE_FAILED",
+    "UPS_ONBATT_LOWBATT",
+    "UPS_ONLINE",
+    "DiskWakeup",
+    "DiskSpindown"
   ],
   "log_level": "INFO",
   "log_dir": "/app/logs",
