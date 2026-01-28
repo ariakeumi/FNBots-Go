@@ -178,7 +178,7 @@ class Config:
         
         # 验证事件类型
         valid_events = {"LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH", 
-                        "APP_UPDATE_FAILED", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+                        "APP_UPDATE_FAILED", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
                         "DiskWakeup", "DiskSpindown"}
         for event in self.monitor_events:
             if event not in valid_events:
