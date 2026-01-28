@@ -12,7 +12,8 @@
   - 发现硬盘 (FoundDisk)
   - 应用崩溃 (APP_CRASH)
   - 应用更新失败 (APP_UPDATE_FAILED)
-  - UPS切换到电池供电 (UPS_ONBATT_LOWBATT)
+  - UPS切换到电池供电 (UPS_ONBATT)
+  - UPS低电量预警 (UPS_ONBATT_LOWBATT)
   - UPS切换到市电供电 (UPS_ONLINE)
   - 磁盘唤醒 (DiskWakeup)
   - 磁盘休眠 (DiskSpindown)
@@ -27,39 +28,44 @@
 ```yaml
 services:
   fn-message-bot:
-    image: lando/fn-message-bot:latest
+    image: sunanang/fn-message-bots:latest  # 使用预构建镜像
     container_name: fn-message-bot
     restart: unless-stopped
-    environment:
-      # 企业微信Webhook（可选）
-      - WECHAT_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx
-      
-      # 钉钉Webhook（可选）
-      - DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=xxx
-      
-      # 飞书Webhook（可选）
-      - FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxx
-      
-      # Bark推送URL（可选）
-      - BARK_URL=https://api.day.app/your_bark_key
-      
-      # 监控事件配置（可选，默认包含所有事件）
-      - MONITOR_EVENTS=LoginSucc,LoginSucc2FA1,Logout,FoundDisk,APP_CRASH,APP_UPDATE_FAILED,UPS_ONBATT_LOWBATT,UPS_ONLINE,DiskWakeup,DiskSpindown
-      
-      # 日志级别（可选）
-      - LOG_LEVEL=INFO
-      
-      # 去重窗口（秒，默认300秒）
-      - DEDUP_WINDOW=300
-      
-      # HTTP配置（可选）
-      - HTTP_POOL_SIZE=10
-      - HTTP_RETRY_COUNT=3
-      - HTTP_TIMEOUT=10
+    network_mode: host
+    privileged: true
+    pid: host
+
+    # 挂载系统日志目录（关键配置）
     volumes:
-      - /var/log:/var/log
-      - /var/run/journal:/var/run/journal:ro
-    privileged: true  # 需要特权访问系统日志
+      # journal二进制日志（如果存在）
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+      # 文本日志（可选）
+      - /var/log/syslog:/var/log/syslog:ro
+      # 应用数据目录
+      - ./data/logs:/app/logs:rw
+      - ./data/cursor:/tmp/cursor:rw
+      # 配置文件目录
+      - ./config:/app/config:ro
+
+    # 环境变量配置
+    environment:
+      # 企业微信Webhook URL (可选)
+      - WECHAT_WEBHOOK_URL=${WECHAT_WEBHOOK_URL}
+      # 钉钉Webhook URL (可选)
+      - DINGTALK_WEBHOOK_URL=${DINGTALK_WEBHOOK_URL}
+      # 飞书Webhook URL (可选)
+      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL}
+      # Bark推送URL (可选)
+      - BARK_URL=${BARK_URL}
+      - TZ=Asia/Shanghai
+
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+      - SYS_PTRACE
+      - AUDIT_READ
+      - AUDIT_READ
 ```
 
 ### 环境变量说明
