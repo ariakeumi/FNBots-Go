@@ -95,8 +95,11 @@ class MultiPlatformNotifier:
         'FoundDisk': '💾 检测到新存储设备接入系统。',
         'APP_CRASH': '❗ 应用程序异常退出，建议检查应用状态和日志。',
         'APP_UPDATE_FAILED': '❗ 应用程序更新失败，建议检查应用状态和日志。',
-        'UPS_ONBATT_LOWBATT': '⚠️ UPS切换到电池供电模式，请注意电池电量。',
+        'UPS_ONBATT': '⚠️ UPS切换到电池供电模式，请注意电池电量。',
+        'UPS_ONBATT_LOWBATT': '⚠️ UPS切换到电池供电模式，电池电量低，请尽快恢复市电供应。',
         'UPS_ONLINE': '✅ UPS切换到市电供电模式，电力供应恢复正常。',
+        'DiskWakeup': '🌙 磁盘已被唤醒。',
+        'DiskSpindown': '🌙 磁盘已进入休眠状态。',
         'APP_START': '🚀 飞牛NAS日志监控服务已启动，开始监控系统事件。',
         'APP_STOP': '🛑 飞牛NAS日志监控服务已停止，暂停监控系统事件。'
     }
@@ -435,50 +438,51 @@ class MultiPlatformNotifier:
     def _build_content(self, event_type: str, event_data: Dict[str, Any], 
                       timestamp: str, raw_log: str) -> str:
         """构建消息内容"""
-        content = f"🕐 {timestamp}\n"
+        content = f"🕐 {timestamp}"
         
         # 根据事件类型添加特定字段
         if event_type in ['LoginSucc', 'LoginSucc2FA1', 'Logout']:
-            content += self._build_login_content(event_data)
+            content += '\n' + self._build_login_content(event_data)
         elif event_type == 'FoundDisk':
-            content += self._build_disk_content(event_data)
+            content += '\n' + self._build_disk_content(event_data)
         elif event_type == 'APP_CRASH':
-            content += self._build_app_crash_content(event_data)
+            content += '\n' + self._build_app_crash_content(event_data)
         elif event_type == 'APP_UPDATE_FAILED':
-            content += self._build_app_update_failed_content(event_data)
+            content += '\n' + self._build_app_update_failed_content(event_data)
         elif event_type == 'UPS_ONBATT':
-            content += self._build_ups_onbatt_content(event_data)
+            content += '\n' + self._build_ups_onbatt_content(event_data)
         elif event_type == 'UPS_ONBATT_LOWBATT':
-            content += self._build_ups_onbatt_lowbatt_content(event_data)
+            content += '\n' + self._build_ups_onbatt_lowbatt_content(event_data)
         elif event_type == 'UPS_ONLINE':
-            content += self._build_ups_online_content(event_data)
+            content += '\n' + self._build_ups_online_content(event_data)
         elif event_type == 'DiskWakeup':
             # 所有磁盘唤醒事件都使用合并样式
             if 'merged_disks' in event_data:
-                content += self._build_merged_disk_wakeup_content(event_data)
+                content += '\n' + self._build_merged_disk_wakeup_content(event_data)
             else:
                 # 单个磁盘事件也转换为合并格式
                 single_disk_as_merged = {
                     'merged_disks': [event_data],
                     'count': 1
                 }
-                content += self._build_merged_disk_wakeup_content(single_disk_as_merged)
+                content += '\n' + self._build_merged_disk_wakeup_content(single_disk_as_merged)
         elif event_type == 'DiskSpindown':
             # 所有磁盘休眠事件都使用合并样式
             if 'merged_disks' in event_data:
-                content += self._build_merged_disk_spindown_content(event_data)
+                content += '\n' + self._build_merged_disk_spindown_content(event_data)
             else:
                 # 单个磁盘事件也转换为合并格式
                 single_disk_as_merged = {
                     'merged_disks': [event_data],
                     'count': 1
                 }
-                content += self._build_merged_disk_spindown_content(single_disk_as_merged)
+                content += '\n' + self._build_merged_disk_spindown_content(single_disk_as_merged)
         
         # 添加备注
         note = self.EVENT_NOTES.get(event_type, '')
         # 统一格式：直接显示备注内容，不加前缀符号
-        content += f"{note}\n"
+        if note:
+            content += f"\n{note}"
         
         return content
     
@@ -561,7 +565,8 @@ class MultiPlatformNotifier:
                 content += f"  🔧 硬盘型号: {model}\n"
             if serial := disk_info.get('serial', ''):
                 content += f"  🔢 序列号: {serial}\n"
-            content += "\n"
+            if i < len(merged_disks):  # 只在不是最后一个磁盘时添加空行
+                content += "\n"
         
         return content
     
@@ -578,7 +583,8 @@ class MultiPlatformNotifier:
                 content += f"  🔧 硬盘型号: {model}\n"
             if serial := disk_info.get('serial', ''):
                 content += f"  🔢 序列号: {serial}\n"
-            content += "\n"
+            if i < len(merged_disks):  # 只在不是最后一个磁盘时添加空行
+                content += "\n"
         
         return content
     
@@ -624,11 +630,11 @@ class MultiPlatformNotifier:
         return content
     
     def _build_ups_onbatt_lowbatt_content(self, event_data: Dict[str, Any]) -> str:
-        """构建UPS切换到电池供电事件内容"""
+        """构建UPS电池电量低警告事件内容"""
         content = ""
         
-        content += f"🔋 UPS状态: 切换到电池供电\n"
-        content += f"⚠️ 请注意电池电量\n"
+        content += f"🔋 UPS状态: 电池供电模式，电量低警告\n"
+        content += f"🚨 电池电量不足，请尽快恢复市电供应\n"
         
         return content
     

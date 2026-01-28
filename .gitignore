@@ -41,3 +41,10 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Sensitive configuration files
+.env
+.env.local
+.env.production
+config/*.json
+!config/config.json
