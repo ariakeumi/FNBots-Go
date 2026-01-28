@@ -514,19 +514,63 @@ class JournalWatcher:
                     except Exception as e:
                         self.logger.error(f"处理APP_UPDATE_FAILED失败: {e}")
                         self.stats['errors'] += 1
+            elif event_id == 'UPS_ONBATT':
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[警告] UPS启动，切换到电池供电, 时间: {timestamp}")
+                
+                # 创建一个虚拟的日志条目来包含完整的事件数据
+                from .models import JournalEntry
+                # 从原始日志行中提取主机名
+                parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
+                hostname = parts[2] if len(parts) >= 3 else 'unknown'
+                virtual_entry = JournalEntry(
+                    cursor='',
+                    timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    hostname=hostname,
+                    syslog_identifier='TRIMEVENT',
+                    message=line,
+                    priority=6,
+                    pid=0,
+                    raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                )
+                
+                # 如果有UPS_ONBATT处理器，也调用它
+                if 'UPS_ONBATT' in self.event_handlers:
+                    try:
+                        self.event_handlers['UPS_ONBATT'](event_data, virtual_entry)
+                        self.stats['events_processed'] += 1
+                        self.logger.info("检测到UPS切换到电池供电事件并发送通知")
+                    except Exception as e:
+                        self.logger.error(f"处理UPS切换到电池供电事件失败: {e}")
+                        self.stats['errors'] += 1
             elif event_id == 'UPS_ONBATT_LOWBATT':
-                self.logger.debug("处理UPS_ONBATT_LOWBATT事件")
-                # 输出UPS切换到电池供电格式的日志
-                timestamp = entry.timestamp
-                print(f"[警告] UPS启动，切换到电池供电，请注意电池电量, 时间: {timestamp}")
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[警告] UPS电池电量低警告, 时间: {timestamp}")
+                
+                # 创建一个虚拟的日志条目来包含完整的事件数据
+                from .models import JournalEntry
+                # 从原始日志行中提取主机名
+                parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
+                hostname = parts[2] if len(parts) >= 3 else 'unknown'
+                virtual_entry = JournalEntry(
+                    cursor='',
+                    timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    hostname=hostname,
+                    syslog_identifier='TRIMEVENT',
+                    message=line,
+                    priority=6,
+                    pid=0,
+                    raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                )
                 
                 # 如果有UPS_ONBATT_LOWBATT处理器，也调用它
                 if 'UPS_ONBATT_LOWBATT' in self.event_handlers:
                     try:
-                        self.event_handlers['UPS_ONBATT_LOWBATT'](event_data, entry)
+                        self.event_handlers['UPS_ONBATT_LOWBATT'](event_data, virtual_entry)
                         self.stats['events_processed'] += 1
+                        self.logger.info("检测到UPS电池电量低警告事件并发送通知")
                     except Exception as e:
-                        self.logger.error(f"处理UPS_ONBATT_LOWBATT失败: {e}")
+                        self.logger.error(f"处理UPS电池电量低警告事件失败: {e}")
                         self.stats['errors'] += 1
             elif event_id == 'UPS_ONLINE':
                 self.logger.debug("处理UPS_ONLINE事件")
@@ -539,8 +583,9 @@ class JournalWatcher:
                     try:
                         self.event_handlers['UPS_ONLINE'](event_data, entry)
                         self.stats['events_processed'] += 1
+                        self.logger.info("检测到UPS切换到市电供电模式事件并发送通知")
                     except Exception as e:
-                        self.logger.error(f"处理UPS_ONLINE失败: {e}")
+                        self.logger.error(f"处理UPS切换到市电供电模式事件失败: {e}")
                         self.stats['errors'] += 1
     
     def _parse_funan_events(self, line: str) -> bool:
@@ -697,9 +742,38 @@ class JournalWatcher:
                         except Exception as e:
                             self.logger.error(f"处理APP更新失败事件失败: {e}")
                             self.stats['errors'] += 1
+                elif event_id == 'UPS_ONBATT':
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[警告] UPS启动，切换到电池供电, 时间: {timestamp}")
+                    
+                    # 创建一个虚拟的日志条目来包含完整的事件数据
+                    from .models import JournalEntry
+                    # 从原始日志行中提取主机名
+                    parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
+                    hostname = parts[2] if len(parts) >= 3 else 'unknown'
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        hostname=hostname,
+                        syslog_identifier='TRIMEVENT',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                    )
+                    
+                    # 如果有UPS_ONBATT处理器，也调用它
+                    if 'UPS_ONBATT' in self.event_handlers:
+                        try:
+                            self.event_handlers['UPS_ONBATT'](event_data, virtual_entry)
+                            self.stats['events_processed'] += 1
+                            self.logger.info("检测到UPS切换到电池供电事件并发送通知")
+                        except Exception as e:
+                            self.logger.error(f"处理UPS切换到电池供电事件失败: {e}")
+                            self.stats['errors'] += 1
                 elif event_id == 'UPS_ONBATT_LOWBATT':
                     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    print(f"[警告] UPS启动，切换到电池供电，请注意电池电量, 时间: {timestamp}")
+                    print(f"[警告] UPS电池电量低警告, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据
                     from .models import JournalEntry
@@ -722,12 +796,14 @@ class JournalWatcher:
                         try:
                             self.event_handlers['UPS_ONBATT_LOWBATT'](event_data, virtual_entry)
                             self.stats['events_processed'] += 1
-                            self.logger.info("检测到UPS切换到电池供电事件并发送通知")
+                            self.logger.info("检测到UPS电池电量低警告事件并发送通知")
                         except Exception as e:
-                            self.logger.error(f"处理UPS切换到电池供电事件失败: {e}")
+                            self.logger.error(f"处理UPS电池电量低警告事件失败: {e}")
                             self.stats['errors'] += 1
                 elif event_id == 'UPS_ONLINE':
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    self.logger.debug("处理UPS_ONLINE事件")
+                    # 输出UPS切换到市电供电格式的日志
+                    timestamp = entry.timestamp
                     print(f"[通知] UPS启动，切换到市电供电模式, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据

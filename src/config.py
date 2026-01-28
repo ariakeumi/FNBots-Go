@@ -21,7 +21,7 @@ class Config:
     # 监控配置
     monitor_events: List[str] = field(default_factory=lambda: [
         "LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH",
-        "APP_UPDATE_FAILED", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+        "APP_UPDATE_FAILED", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
         "DiskWakeup", "DiskSpindown"
     ])
     

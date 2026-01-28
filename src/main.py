@@ -4,11 +4,14 @@ import socket
 import os
 from datetime import datetime
 
-from src.config import Config
-from src.utils.logger import setup_logging
-from src.monitor.journal_watcher import JournalWatcher
-from src.monitor.event_processor import EventProcessor
-from src.notifier.unified_notifier import UnifiedNotifier
+# 添加src目录到Python路径，解决模块导入问题
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config import Config
+from utils.logger import setup_logging
+from monitor.journal_watcher import JournalWatcher
+from monitor.event_processor import EventProcessor
+from notifier.unified_notifier import UnifiedNotifier
 
 class Application:
     """主应用程序"""

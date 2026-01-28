@@ -7,6 +7,7 @@ import time
 import logging
 import hashlib
 import urllib.parse
+import threading
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from datetime import datetime
@@ -60,13 +61,16 @@ class MultiPlatformNotifier:
         'FoundDisk': '💾 飞牛NAS-发现新硬盘',
         'APP_CRASH': '💥 飞牛NAS-应用崩溃告警',
         'APP_UPDATE_FAILED': '💥 飞牛NAS-应用更新失败告警',
-        'UPS_ONBATT_LOWBATT': '🔋 飞牛NAS-UPS电池供电告警',
-        'UPS_ONLINE': '🔌 飞牛NAS-UPS市电供电通知',
+        'UPS_ONBATT': '⚠️ 飞牛NAS-UPS切换到电池供电模式。',
+        'UPS_ONBATT_LOWBATT': '🚨 飞牛NAS-UPS切换到电池供电模式，电池电量低警告！',
+        'UPS_ONLINE': '✅ 飞牛NAS-UPS切换到市电供电模式，电力供应恢复正常。',
+        'DiskWakeup': '🌙 飞牛NAS-磁盘唤醒通知',
+        'DiskSpindown': '🌙 飞牛NAS-磁盘休眠通知',
         'APP_START': '🔔 飞牛NAS-监控启动通知',
         'APP_STOP': '🔕 飞牛NAS-监控关闭通知'
     }
     
-    # Bark事件标题映射 - 用于Bark推送，标题统一为“飞牛NAS通知”
+    # Bark事件标题映射 - 用于Bark推送，标题统一为"飞牛NAS通知"
     BARK_EVENT_CONTENTS = {
         'LoginSucc': '用户{user}登录成功',
         'LoginSucc2FA1': '用户{user}登录触发二次校验',
@@ -74,7 +78,8 @@ class MultiPlatformNotifier:
         'FoundDisk': '发现新硬盘{disk_info}',
         'APP_CRASH': '应用{name}崩溃',
         'APP_UPDATE_FAILED': '应用{name}更新失败',
-        'UPS_ONBATT_LOWBATT': 'UPS提示：UPS切换到电池供电，请注意电池电量',
+        'UPS_ONBATT': 'UPS提示：UPS切换到电池供电',
+        'UPS_ONBATT_LOWBATT': 'UPS提示：UPS电池电量低警告',
         'UPS_ONLINE': 'UPS提示：UPS切换到市电供电',
         'DiskWakeup': '磁盘被唤醒',
         'DiskSpindown': '磁盘进入休眠状态',
@@ -134,10 +139,13 @@ class MultiPlatformNotifier:
         # 事件去重缓存
         self.sent_events = {}
         
-        # 磁盘事件合并缓存
-        self.disk_wakeup_cache = {}
-        self.disk_spindown_cache = {}
-        self.merge_window = 30  # 30秒合并窗口
+        # 磁盘事件合并缓存 - 使用时间窗口缓存多个磁盘事件
+        self.disk_wakeup_cache = {}  # {time_window: [event_data_list]}
+        self.disk_spindown_cache = {}  # {time_window: [event_data_list]}
+        self.merge_window = 5  # 5秒合并窗口
+        
+        # 合并事件定时发送线程
+        self._start_merge_timer()
         
         # 日志
         self.logger = logging.getLogger(__name__)
@@ -153,6 +161,91 @@ class MultiPlatformNotifier:
             platforms.append('Bark')
         
         self.logger.info(f"多平台通知器初始化完成，支持平台: {', '.join(platforms) if platforms else '无'}, 去重窗口: {dedup_window}秒")
+    
+    def _start_merge_timer(self):
+        """启动合并事件定时处理线程"""
+        self.timer_thread = threading.Thread(target=self._merge_timer_worker, daemon=True)
+        self.timer_thread.start()
+    
+    def _merge_timer_worker(self):
+        """合并事件定时处理工作线程"""
+        while True:
+            try:
+                # 检查并处理过期的合并事件
+                current_time = time.time()
+                current_window = int(current_time / self.merge_window)
+                
+                # 检查前一个窗口是否有待合并的事件
+                prev_window = current_window - 1
+                
+                # 处理待合并的磁盘唤醒事件
+                if prev_window in self.disk_wakeup_cache and self.disk_wakeup_cache[prev_window]:
+                    self._send_merged_disk_event('DiskWakeup', self.disk_wakeup_cache[prev_window], prev_window)
+                    del self.disk_wakeup_cache[prev_window]
+                
+                # 处理待合并的磁盘休眠事件
+                if prev_window in self.disk_spindown_cache and self.disk_spindown_cache[prev_window]:
+                    self._send_merged_disk_event('DiskSpindown', self.disk_spindown_cache[prev_window], prev_window)
+                    del self.disk_spindown_cache[prev_window]
+                
+                # 清理太久之前的缓存（超过2个窗口的）
+                too_old_window = current_window - 3
+                self.disk_wakeup_cache = {k: v for k, v in self.disk_wakeup_cache.items() if k > too_old_window}
+                self.disk_spindown_cache = {k: v for k, v in self.disk_spindown_cache.items() if k > too_old_window}
+                
+                time.sleep(5)  # 每5秒检查一次
+            except Exception as e:
+                self.logger.error(f"合并定时器工作线程出错: {e}")
+    
+    def _send_merged_disk_event(self, event_type: str, event_list: List[Dict], time_window: int):
+        """发送合并的磁盘事件"""
+        if not event_list:
+            return
+            
+        # 创建合并事件数据
+        merged_data = {
+            'merged_disks': event_list,
+            'count': len(event_list),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # 构建消息
+        title = self.EVENT_TITLES.get(event_type, f"📋 系统事件: {event_type}")
+        content = self._build_content(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
+        message = MultiPlatformMessage(title=title, content=content)
+        
+        results = []
+        
+        # 发送到企业微信
+        if self.wechat_webhook_url:
+            wechat_result = self._send_to_wechat(message)
+            results.append(wechat_result)
+            self.logger.debug(f"合并事件-企业微信通知发送结果: {wechat_result}")
+        
+        # 发送到钉钉
+        if self.dingtalk_webhook_url:
+            dingtalk_result = self._send_to_dingtalk(message)
+            results.append(dingtalk_result)
+            self.logger.debug(f"合并事件-钉钉通知发送结果: {dingtalk_result}")
+        
+        # 发送到飞书
+        if self.feishu_webhook_url:
+            feishu_result = self._send_to_feishu(message)
+            results.append(feishu_result)
+            self.logger.debug(f"合并事件-飞书通知发送结果: {feishu_result}")
+        
+        # 发送到Bark
+        if self.bark_url:
+            bark_message = self._build_bark_message(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
+            bark_result = self._send_to_bark(bark_message)
+            results.append(bark_result)
+            self.logger.debug(f"合并事件-Bark通知发送结果: {bark_result}")
+        
+        # 记录发送结果
+        if results and any(results):
+            self.logger.info(f"合并事件发送成功: {event_type}, 数量: {len(event_list)}")
+        else:
+            self.logger.warning(f"合并事件发送失败: {event_type}, 数量: {len(event_list)}")
     
     def send_notification(self, 
                          event_type: str,
@@ -171,6 +264,10 @@ class MultiPlatformNotifier:
         Returns:
             是否发送成功（任意一个平台成功即返回True）
         """
+        # 特殊处理磁盘事件的合并
+        if event_type in ['DiskWakeup', 'DiskSpindown']:
+            return self._handle_disk_event(event_type, event_data, raw_log, timestamp)
+        
         # 生成事件指纹（用于去重）
         event_fingerprint = self._generate_fingerprint(event_type, event_data)
         
@@ -218,6 +315,26 @@ class MultiPlatformNotifier:
         else:
             self.logger.warning(f"所有通知发送失败: {event_type}")
             return False
+    
+    def _handle_disk_event(self, event_type: str, event_data: Dict[str, Any], raw_log: str, timestamp: str) -> bool:
+        """处理磁盘事件，将其添加到合并缓存中"""
+        # 获取当前时间窗口
+        current_time = time.time()
+        current_window = int(current_time / self.merge_window)
+        
+        # 将事件数据添加到对应类型的缓存中
+        if event_type == 'DiskWakeup':
+            if current_window not in self.disk_wakeup_cache:
+                self.disk_wakeup_cache[current_window] = []
+            self.disk_wakeup_cache[current_window].append(event_data.copy())  # 复制数据以避免后续修改影响
+        elif event_type == 'DiskSpindown':
+            if current_window not in self.disk_spindown_cache:
+                self.disk_spindown_cache[current_window] = []
+            self.disk_spindown_cache[current_window].append(event_data.copy())
+        
+        # 返回True表示事件已加入合并队列
+        self.logger.debug(f"磁盘事件已加入合并队列: {event_type} -> 窗口 {current_window}")
+        return True
     
     def _send_to_wechat(self, message: MultiPlatformMessage) -> bool:
         """发送到企业微信"""
@@ -284,16 +401,6 @@ class MultiPlatformNotifier:
             minute_window = int(time.time() / 300)  # 5分钟窗口
             key = f"ups_online_{minute_window}"
         
-        elif event_type == 'DiskWakeup':
-            # 磁盘唤醒：按时间窗口合并
-            minute_window = int(time.time() / self.merge_window)
-            key = f"disk_wakeup_{minute_window}"
-        
-        elif event_type == 'DiskSpindown':
-            # 磁盘休眠：按时间窗口合并
-            minute_window = int(time.time() / self.merge_window)
-            key = f"disk_spindown_{minute_window}"
-        
         else:
             # 登录/退出：按用户、IP和时间（分钟）去重
             user = event_data.get('user', 'unknown')
@@ -339,22 +446,34 @@ class MultiPlatformNotifier:
             content += self._build_app_crash_content(event_data)
         elif event_type == 'APP_UPDATE_FAILED':
             content += self._build_app_update_failed_content(event_data)
+        elif event_type == 'UPS_ONBATT':
+            content += self._build_ups_onbatt_content(event_data)
         elif event_type == 'UPS_ONBATT_LOWBATT':
             content += self._build_ups_onbatt_lowbatt_content(event_data)
         elif event_type == 'UPS_ONLINE':
             content += self._build_ups_online_content(event_data)
         elif event_type == 'DiskWakeup':
-            # 检查是否为合并事件
+            # 所有磁盘唤醒事件都使用合并样式
             if 'merged_disks' in event_data:
                 content += self._build_merged_disk_wakeup_content(event_data)
             else:
-                content += self._build_disk_wakeup_content(event_data)
+                # 单个磁盘事件也转换为合并格式
+                single_disk_as_merged = {
+                    'merged_disks': [event_data],
+                    'count': 1
+                }
+                content += self._build_merged_disk_wakeup_content(single_disk_as_merged)
         elif event_type == 'DiskSpindown':
-            # 检查是否为合并事件
+            # 所有磁盘休眠事件都使用合并样式
             if 'merged_disks' in event_data:
                 content += self._build_merged_disk_spindown_content(event_data)
             else:
-                content += self._build_disk_spindown_content(event_data)
+                # 单个磁盘事件也转换为合并格式
+                single_disk_as_merged = {
+                    'merged_disks': [event_data],
+                    'count': 1
+                }
+                content += self._build_merged_disk_spindown_content(single_disk_as_merged)
         
         # 添加备注
         note = self.EVENT_NOTES.get(event_type, '')
@@ -433,9 +552,6 @@ class MultiPlatformNotifier:
         """构建合并磁盘唤醒事件内容"""
         content = ""
         
-        count = event_data.get('count', 0)
-        content += f"📊 合并事件: {count} 个磁盘唤醒\n\n"
-        
         merged_disks = event_data.get('merged_disks', [])
         for i, disk_info in enumerate(merged_disks, 1):
             content += f"磁盘 #{i}:\n"
@@ -452,9 +568,6 @@ class MultiPlatformNotifier:
     def _build_merged_disk_spindown_content(self, event_data: Dict[str, Any]) -> str:
         """构建合并磁盘休眠事件内容"""
         content = ""
-        
-        count = event_data.get('count', 0)
-        content += f"📊 合并事件: {count} 个磁盘休眠\n\n"
         
         merged_disks = event_data.get('merged_disks', [])
         for i, disk_info in enumerate(merged_disks, 1):
@@ -498,6 +611,15 @@ class MultiPlatformNotifier:
         
         if from_src := event_data.get('from', ''):
             content += f"📦 来源模块: {from_src}\n"
+        
+        return content
+    
+    def _build_ups_onbatt_content(self, event_data: Dict[str, Any]) -> str:
+        """构建UPS切换到电池供电事件内容"""
+        content = ""
+        
+        content += f"🔋 UPS状态: 切换到电池供电\n"
+        content += f"⚠️ 请注意电池电量\n"
         
         return content
     
@@ -683,6 +805,9 @@ class MultiPlatformNotifier:
             'has_wechat_webhook': bool(self.wechat_webhook_url),
             'has_dingtalk_webhook': bool(self.dingtalk_webhook_url),
             'has_feishu_webhook': bool(self.feishu_webhook_url),
+            'disk_wakeup_cache_size': len(self.disk_wakeup_cache),
+            'disk_spindown_cache_size': len(self.disk_spindown_cache),
+            'merge_window': self.merge_window,
             'wechat_webhook_url': self.wechat_webhook_url[:50] + '...' 
                 if len(self.wechat_webhook_url) > 50 else self.wechat_webhook_url,
             'dingtalk_webhook_url': self.dingtalk_webhook_url[:50] + '...' 

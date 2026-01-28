@@ -1,4 +1,4 @@
-"""
+tong"""
 事件处理器模块
 """
 
@@ -34,6 +34,7 @@ class EventProcessor:
             'FoundDisk': self._handle_found_disk,
             'APP_CRASH': self._handle_app_crash,
             'APP_UPDATE_FAILED': self._handle_app_update_failed,
+            'UPS_ONBATT': self._handle_ups_onbatt,
             'UPS_ONBATT_LOWBATT': self._handle_ups_onbatt_lowbatt,
             'UPS_ONLINE': self._handle_ups_online,
             'DiskWakeup': self._handle_disk_wakeup,
@@ -179,14 +180,33 @@ class EventProcessor:
             timestamp=timestamp
         )
     
-    def _handle_ups_onbatt_lowbatt(self, event_data: Dict[str, Any], entry: JournalEntry):
+    def _handle_ups_onbatt(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理UPS切换到电池供电事件"""
         timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         
         # 输出标准格式日志
-        print(f"[警告] UPS启动，切换到电池供电，请注意电池电量, 时间: {timestamp}")
+        print(f"[警告] UPS启动，切换到电池供电, 时间: {timestamp}")
         
         self.logger.warning("UPS启动，切换到电池供电")
+        
+        # 如果entry为None，使用默认值
+        raw_log = getattr(entry, 'raw_data', '{}')
+        
+        self.notifier.send_notification(
+            event_type='UPS_ONBATT',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+    
+    def _handle_ups_onbatt_lowbatt(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理UPS切换到电池供电且电池电量低事件"""
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        
+        # 输出标准格式日志
+        print(f"[严重警告] UPS启动，切换到电池供电，电池电量低警告, 时间: {timestamp}")
+        
+        self.logger.warning("UPS启动，切换到电池供电，电池电量低警告")
         
         # 如果entry为None，使用默认值
         raw_log = getattr(entry, 'raw_data', '{}')
