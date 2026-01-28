@@ -803,7 +803,7 @@ class JournalWatcher:
                 elif event_id == 'UPS_ONLINE':
                     self.logger.debug("处理UPS_ONLINE事件")
                     # 输出UPS切换到市电供电格式的日志
-                    timestamp = entry.timestamp
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     print(f"[通知] UPS启动，切换到市电供电模式, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据
