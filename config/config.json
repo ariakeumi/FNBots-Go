@@ -2,6 +2,7 @@
   "wechat_webhook_url": "${WECHAT_WEBHOOK_URL}",
   "dingtalk_webhook_url": "${DINGTALK_WEBHOOK_URL}",
   "feishu_webhook_url": "${FEISHU_WEBHOOK_URL}",
+  "bark_url": "${BARK_URL}",
   "monitor_events": [
     "LoginSucc", 
     "LoginSucc2FA1", 
@@ -9,6 +10,10 @@
     "FoundDisk", 
     "APP_CRASH",
     "APP_UPDATE_FAILED", 
+    "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
+    "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE",
+    "CPU_USAGE_ALARM",
+    "CPU_TEMPERATURE_ALARM",
     "UPS_ONBATT", 
     "UPS_ONBATT_LOWBATT", 
     "UPS_ONLINE",
@@ -16,6 +21,7 @@
     "DiskSpindown"
   ],
   "log_level": "INFO",
+  "log_dir": "./logs",
   "http_pool_size": 10,
   "http_retry_count": 3,
   "http_timeout": 10,

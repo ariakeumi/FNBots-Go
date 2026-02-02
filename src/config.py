@@ -21,7 +21,9 @@ class Config:
     # 监控配置
     monitor_events: List[str] = field(default_factory=lambda: [
         "LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH",
-        "APP_UPDATE_FAILED", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+        "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
+        "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
+        "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
         "DiskWakeup", "DiskSpindown"
     ])
     
@@ -37,7 +39,6 @@ class Config:
     
     # 系统路径配置
     journal_paths: List[str] = field(default_factory=lambda: [
-        "./test_logs/journal",  # 用于测试
         "/var/log/journal",
         "/run/log/journal"
     ])
@@ -61,8 +62,19 @@ class Config:
     
     def _load_from_file_skip_if_set(self):
         """从配置文件加载（可选），但跳过已设置的配置项"""
-        config_file = Path('/app/config/config.json')
-        if config_file.exists():
+        # 优先使用项目目录下的配置文件
+        config_paths = [
+            Path('./config/config.json'),  # 本地开发环境
+            Path('/app/config/config.json')  # 容器环境
+        ]
+        
+        config_file = None
+        for path in config_paths:
+            if path.exists():
+                config_file = path
+                break
+        
+        if config_file:
             try:
                 with open(config_file, 'r') as f:
                     data = json.load(f)
@@ -72,7 +84,7 @@ class Config:
                     if hasattr(self, key):
                         current_value = getattr(self, key)
                         # 如果当前值是默认值（空字符串）或者是一个占位符，则用配置文件中的值替换
-                        if not current_value or (isinstance(value, str) and value.startswith('${') and value.endswith('}')):
+                        if not current_value or (isinstance(current_value, str) and current_value.startswith('${') and current_value.endswith('}')):
                             # 如果值是字符串且包含环境变量占位符，则进行替换
                             if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
                                 env_var_name = value[2:-1]  # 提取变量名
@@ -81,7 +93,8 @@ class Config:
                             else:
                                 setattr(self, key, value)
             except Exception as e:
-                print(f"警告: 配置文件读取失败 - {e}")
+                # 生产环境中静默处理配置文件错误
+                pass
     
     def _load_from_env(self):
         """从环境变量加载配置"""
@@ -177,8 +190,10 @@ class Config:
             raise ValueError("必须配置至少一个监控事件")
         
         # 验证事件类型
-        valid_events = {"LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH", 
-                        "APP_UPDATE_FAILED", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+        valid_events = {"LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH",
+                        "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
+                        "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
+                        "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
                         "DiskWakeup", "DiskSpindown"}
         for event in self.monitor_events:
             if event not in valid_events:

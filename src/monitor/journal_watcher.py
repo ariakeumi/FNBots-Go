@@ -423,8 +423,6 @@ class JournalWatcher:
                     self.stats['errors'] += 1
         elif 'accepted' in lower_line:
             self.logger.info(f"检测到接受连接: {line}")
-        elif 'failed' in lower_line or 'failure' in lower_line:
-            self.logger.info(f"检测到失败事件: {line}")
     
     def _handle_journal_entry(self, entry: JournalEntry):
         """处理日志条目"""
@@ -500,19 +498,60 @@ class JournalWatcher:
                         self.stats['errors'] += 1
             elif event_id == 'APP_UPDATE_FAILED':
                 self.logger.debug("处理APP_UPDATE_FAILED事件")
-                # 输出APP更新失败格式的日志
                 app_data = event_data.get('data', {})
                 display_name = app_data.get('DISPLAY_NAME', app_data.get('APP_NAME', '未知应用'))
                 timestamp = entry.timestamp
                 print(f"[错误] 应用: {display_name}, 更新失败, 时间: {timestamp}")
-                
-                # 如果有APP_UPDATE_FAILED处理器，也调用它
                 if 'APP_UPDATE_FAILED' in self.event_handlers:
                     try:
                         self.event_handlers['APP_UPDATE_FAILED'](event_data, entry)
                         self.stats['events_processed'] += 1
                     except Exception as e:
                         self.logger.error(f"处理APP_UPDATE_FAILED失败: {e}")
+                        self.stats['errors'] += 1
+            elif event_id == 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION':
+                app_data = event_data.get('data', {})
+                display_name = app_data.get('DISPLAY_NAME', app_data.get('APP_NAME', '未知应用'))
+                print(f"[错误] 应用: {display_name}, 启动失败(本地运行异常), 时间: {entry.timestamp}")
+                if 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION' in self.event_handlers:
+                    try:
+                        self.event_handlers['APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION'](event_data, entry)
+                        self.stats['events_processed'] += 1
+                    except Exception as e:
+                        self.logger.error(f"处理应用启动失败事件失败: {e}")
+                        self.stats['errors'] += 1
+            elif event_id == 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE':
+                app_data = event_data.get('data', {})
+                display_name = app_data.get('DISPLAY_NAME', app_data.get('APP_NAME', '未知应用'))
+                print(f"[错误] 应用: {display_name}, 自启动失败(Docker不可用), 时间: {entry.timestamp}")
+                if 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE' in self.event_handlers:
+                    try:
+                        self.event_handlers['APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE'](event_data, entry)
+                        self.stats['events_processed'] += 1
+                    except Exception as e:
+                        self.logger.error(f"处理应用自启动失败事件失败: {e}")
+                        self.stats['errors'] += 1
+            elif event_id == 'CPU_USAGE_ALARM':
+                data = event_data.get('data', {})
+                threshold = data.get('THRESHOLD', 0)
+                print(f"[告警] CPU使用率超过 {threshold}%, 时间: {entry.timestamp}")
+                if 'CPU_USAGE_ALARM' in self.event_handlers:
+                    try:
+                        self.event_handlers['CPU_USAGE_ALARM'](event_data, entry)
+                        self.stats['events_processed'] += 1
+                    except Exception as e:
+                        self.logger.error(f"处理CPU使用率告警失败: {e}")
+                        self.stats['errors'] += 1
+            elif event_id == 'CPU_TEMPERATURE_ALARM':
+                data = event_data.get('data', {})
+                threshold = data.get('THRESHOLD', 0)
+                print(f"[告警] CPU温度超过 {threshold}°C, 时间: {entry.timestamp}")
+                if 'CPU_TEMPERATURE_ALARM' in self.event_handlers:
+                    try:
+                        self.event_handlers['CPU_TEMPERATURE_ALARM'](event_data, entry)
+                        self.stats['events_processed'] += 1
+                    except Exception as e:
+                        self.logger.error(f"处理CPU温度告警失败: {e}")
                         self.stats['errors'] += 1
             elif event_id == 'UPS_ONBATT':
                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -741,6 +780,86 @@ class JournalWatcher:
                             self.logger.info(f"检测到APP更新失败事件并发送通知: {display_name}")
                         except Exception as e:
                             self.logger.error(f"处理APP更新失败事件失败: {e}")
+                            self.stats['errors'] += 1
+                elif event_id == 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION':
+                    app_data = event_data.get('data', {})
+                    display_name = app_data.get('DISPLAY_NAME', app_data.get('APP_NAME', '未知应用'))
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[错误] 应用: {display_name}, 启动失败(本地运行异常), 时间: {timestamp}")
+                    parts = line.split(None, 3)
+                    hostname = parts[2] if len(parts) >= 3 else 'unknown'
+                    virtual_entry = JournalEntry(
+                        cursor='', timestamp=timestamp, hostname=hostname,
+                        syslog_identifier='TRIMEVENT', message=line, priority=6, pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                    )
+                    if 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION' in self.event_handlers:
+                        try:
+                            self.event_handlers['APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION'](event_data, virtual_entry)
+                            self.stats['events_processed'] += 1
+                            self.logger.info(f"检测到应用启动失败事件并发送通知: {display_name}")
+                        except Exception as e:
+                            self.logger.error(f"处理应用启动失败事件失败: {e}")
+                            self.stats['errors'] += 1
+                elif event_id == 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE':
+                    app_data = event_data.get('data', {})
+                    display_name = app_data.get('DISPLAY_NAME', app_data.get('APP_NAME', '未知应用'))
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[错误] 应用: {display_name}, 自启动失败(Docker不可用), 时间: {timestamp}")
+                    parts = line.split(None, 3)
+                    hostname = parts[2] if len(parts) >= 3 else 'unknown'
+                    virtual_entry = JournalEntry(
+                        cursor='', timestamp=timestamp, hostname=hostname,
+                        syslog_identifier='TRIMEVENT', message=line, priority=6, pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                    )
+                    if 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE' in self.event_handlers:
+                        try:
+                            self.event_handlers['APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE'](event_data, virtual_entry)
+                            self.stats['events_processed'] += 1
+                            self.logger.info(f"检测到应用自启动失败事件并发送通知: {display_name}")
+                        except Exception as e:
+                            self.logger.error(f"处理应用自启动失败事件失败: {e}")
+                            self.stats['errors'] += 1
+                elif event_id == 'CPU_USAGE_ALARM':
+                    data = event_data.get('data', {})
+                    threshold = data.get('THRESHOLD', 0)
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[告警] CPU使用率超过 {threshold}%, 时间: {timestamp}")
+                    parts = line.split(None, 3)
+                    hostname = parts[2] if len(parts) >= 3 else 'unknown'
+                    virtual_entry = JournalEntry(
+                        cursor='', timestamp=timestamp, hostname=hostname,
+                        syslog_identifier='TRIMEVENT', message=line, priority=6, pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                    )
+                    if 'CPU_USAGE_ALARM' in self.event_handlers:
+                        try:
+                            self.event_handlers['CPU_USAGE_ALARM'](event_data, virtual_entry)
+                            self.stats['events_processed'] += 1
+                            self.logger.info("检测到CPU使用率告警并发送通知")
+                        except Exception as e:
+                            self.logger.error(f"处理CPU使用率告警失败: {e}")
+                            self.stats['errors'] += 1
+                elif event_id == 'CPU_TEMPERATURE_ALARM':
+                    data = event_data.get('data', {})
+                    threshold = data.get('THRESHOLD', 0)
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[告警] CPU温度超过 {threshold}°C, 时间: {timestamp}")
+                    parts = line.split(None, 3)
+                    hostname = parts[2] if len(parts) >= 3 else 'unknown'
+                    virtual_entry = JournalEntry(
+                        cursor='', timestamp=timestamp, hostname=hostname,
+                        syslog_identifier='TRIMEVENT', message=line, priority=6, pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                    )
+                    if 'CPU_TEMPERATURE_ALARM' in self.event_handlers:
+                        try:
+                            self.event_handlers['CPU_TEMPERATURE_ALARM'](event_data, virtual_entry)
+                            self.stats['events_processed'] += 1
+                            self.logger.info("检测到CPU温度告警并发送通知")
+                        except Exception as e:
+                            self.logger.error(f"处理CPU温度告警失败: {e}")
                             self.stats['errors'] += 1
                 elif event_id == 'UPS_ONBATT':
                     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

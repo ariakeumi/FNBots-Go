@@ -33,6 +33,10 @@ class EventProcessor:
             'FoundDisk': self._handle_found_disk,
             'APP_CRASH': self._handle_app_crash,
             'APP_UPDATE_FAILED': self._handle_app_update_failed,
+            'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': self._handle_app_start_failed_local,
+            'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE': self._handle_app_auto_start_failed_docker,
+            'CPU_USAGE_ALARM': self._handle_cpu_usage_alarm,
+            'CPU_TEMPERATURE_ALARM': self._handle_cpu_temperature_alarm,
             'UPS_ONBATT': self._handle_ups_onbatt,
             'UPS_ONBATT_LOWBATT': self._handle_ups_onbatt_lowbatt,
             'UPS_ONLINE': self._handle_ups_online,
@@ -174,6 +178,62 @@ class EventProcessor:
         
         self.notifier.send_notification(
             event_type='APP_UPDATE_FAILED',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+
+    def _handle_app_start_failed_local(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理应用启动失败事件（本地运行异常）"""
+        data = event_data.get('data', {})
+        display_name = data.get('DISPLAY_NAME', data.get('APP_NAME', '未知应用'))
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.warning(f"应用启动失败: {display_name}")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type='APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+
+    def _handle_app_auto_start_failed_docker(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理应用自启动失败事件（Docker 不可用）"""
+        data = event_data.get('data', {})
+        display_name = data.get('DISPLAY_NAME', data.get('APP_NAME', '未知应用'))
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.warning(f"应用自启动失败(Docker不可用): {display_name}")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type='APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+
+    def _handle_cpu_usage_alarm(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理 CPU 使用率告警"""
+        data = event_data.get('data', {})
+        threshold = data.get('THRESHOLD', 0)
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.warning(f"CPU使用率告警: 超过 {threshold}%")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type='CPU_USAGE_ALARM',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+
+    def _handle_cpu_temperature_alarm(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理 CPU 温度告警"""
+        data = event_data.get('data', {})
+        threshold = data.get('THRESHOLD', 0)
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.warning(f"CPU温度告警: 超过 {threshold}°C")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type='CPU_TEMPERATURE_ALARM',
             event_data=event_data,
             raw_log=raw_log,
             timestamp=timestamp

@@ -66,7 +66,7 @@ class UnifiedNotifier:
             event_type, event_data, raw_log, timestamp
         )
         
-        # 确定使用的方法
+        # 确定实际使用的方法（检查哪些平台真正发送了）
         active_platforms = []
         if self.config.wechat_webhook_url:
             active_platforms.append('wechat')
@@ -74,6 +74,8 @@ class UnifiedNotifier:
             active_platforms.append('dingtalk')
         if self.config.feishu_webhook_url:
             active_platforms.append('feishu')
+        if self.config.bark_url:
+            active_platforms.append('bark')
         
         if len(active_platforms) == 0:
             method = 'none'
@@ -111,7 +113,7 @@ class UnifiedNotifier:
             event_type, message, additional_info
         )
         
-        # 确定使用的方法
+        # 确定实际使用的方法（检查哪些平台真正发送了）
         active_platforms = []
         if self.config.wechat_webhook_url:
             active_platforms.append('wechat')
@@ -119,6 +121,8 @@ class UnifiedNotifier:
             active_platforms.append('dingtalk')
         if self.config.feishu_webhook_url:
             active_platforms.append('feishu')
+        if self.config.bark_url:
+            active_platforms.append('bark')
         
         if len(active_platforms) == 0:
             method = 'none'

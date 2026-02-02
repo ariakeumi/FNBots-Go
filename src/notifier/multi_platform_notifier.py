@@ -61,6 +61,10 @@ class MultiPlatformNotifier:
         'FoundDisk': '💾 飞牛NAS-发现新硬盘',
         'APP_CRASH': '💥 飞牛NAS-应用崩溃告警',
         'APP_UPDATE_FAILED': '💥 飞牛NAS-应用更新失败告警',
+        'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '💥 飞牛NAS-应用启动失败告警',
+        'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE': '💥 飞牛NAS-应用自启动失败告警',
+        'CPU_USAGE_ALARM': '📊 飞牛NAS-CPU使用率告警',
+        'CPU_TEMPERATURE_ALARM': '🌡️ 飞牛NAS-CPU温度告警',
         'UPS_ONBATT': '⚠️ 飞牛NAS-UPS切换到电池供电模式',
         'UPS_ONBATT_LOWBATT': '🚨 飞牛NAS-UPS切换到电池供电模式',
         'UPS_ONLINE': '✅ 飞牛NAS-UPS切换到市电供电模式',
@@ -75,14 +79,18 @@ class MultiPlatformNotifier:
         'LoginSucc': '用户{user}登录成功',
         'LoginSucc2FA1': '用户{user}登录触发二次校验',
         'Logout': '用户{user}退出登录',
-        'FoundDisk': '发现新硬盘{disk_info}',
+        'FoundDisk': '发现新硬盘{disk_name}',
         'APP_CRASH': '应用{name}崩溃',
         'APP_UPDATE_FAILED': '应用{name}更新失败',
+        'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '应用{name}启动失败',
+        'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE': '应用{name}自启动失败(Docker不可用)',
+        'CPU_USAGE_ALARM': 'CPU使用率超过{threshold}%',
+        'CPU_TEMPERATURE_ALARM': 'CPU温度超过{threshold}°C',
         'UPS_ONBATT': 'UPS提示：UPS切换到电池供电',
         'UPS_ONBATT_LOWBATT': 'UPS提示：UPS电池电量低警告',
         'UPS_ONLINE': 'UPS提示：UPS切换到市电供电',
-        'DiskWakeup': '磁盘被唤醒',
-        'DiskSpindown': '磁盘进入休眠状态',
+        'DiskWakeup': '磁盘唤醒: {disk_devices}',
+        'DiskSpindown': '磁盘休眠: {disk_devices}',
         'APP_START': '飞牛NAS通知启动',
         'APP_STOP': '飞牛NAS通知已停止'
     }
@@ -95,6 +103,10 @@ class MultiPlatformNotifier:
         'FoundDisk': '💾 检测到新存储设备接入系统。',
         'APP_CRASH': '❗ 应用程序异常退出，建议检查应用状态和日志。',
         'APP_UPDATE_FAILED': '❗ 应用程序更新失败，建议检查应用状态和日志。',
+        'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '❗ 应用程序启动失败（本地运行异常），建议检查应用状态和日志。',
+        'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE': '❗ 应用程序自启动失败（Docker 不可用），请检查 Docker 服务。',
+        'CPU_USAGE_ALARM': '⚠️ CPU 使用率超过阈值，建议检查系统负载或关闭占用高的进程。',
+        'CPU_TEMPERATURE_ALARM': '⚠️ CPU 温度超过阈值，请检查散热与机箱通风。',
         'UPS_ONBATT': '⚠️ UPS切换到电池供电模式，请注意电池电量。',
         'UPS_ONBATT_LOWBATT': '⚠️ UPS切换到电池供电模式，电池电量低，请尽快恢复市电供应。',
         'UPS_ONLINE': '✅ UPS切换到市电供电模式，电力供应恢复正常。',
@@ -358,13 +370,21 @@ class MultiPlatformNotifier:
         return result is not None
     
     def _send_to_bark(self, message: MultiPlatformMessage) -> bool:
-        """发送到Bark，使用URL路径格式: bark_url/内容?title=标题"""
-        # 对内容和标题进行URL编码
-        encoded_content = urllib.parse.quote(message.content, safe='')
-        encoded_title = urllib.parse.quote(message.title, safe='')
+        """发送到Bark，支持{content}占位符替换功能"""
+        import urllib.parse
         
-        # 构造Bark推送URL，使用内容作为路径，标题作为查询参数
-        bark_push_url = f"{self.bark_url.rstrip('/')}/{encoded_content}?title={encoded_title}"
+        # 检查URL中是否包含{content}占位符
+        if '{content}' in self.bark_url:
+            # 如果URL中包含{content}占位符，替换为推送内容
+            # 对内容进行URL编码
+            encoded_content = urllib.parse.quote(message.content, safe='')
+            # 替换占位符
+            bark_push_url = self.bark_url.replace('{content}', encoded_content)
+        else:
+            # 保持原来的推送逻辑：内容作为路径，标题作为查询参数
+            encoded_content = urllib.parse.quote(message.content, safe='')
+            encoded_title = urllib.parse.quote(message.title, safe='')
+            bark_push_url = f"{self.bark_url.rstrip('/')}/{encoded_content}?title={encoded_title}"
         
         # 使用连接池的GET方法发送请求
         result = self.connection_pool.get(bark_push_url)
@@ -393,6 +413,14 @@ class MultiPlatformNotifier:
             app_name = data.get('DISPLAY_NAME', data.get('APP_NAME', 'unknown'))
             minute_window = int(time.time() / 300)  # 5分钟窗口
             key = f"update_failed_{app_name}_{minute_window}"
+        elif event_type in ['APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION', 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE']:
+            data = event_data.get('data', {})
+            app_name = data.get('DISPLAY_NAME', data.get('APP_NAME', 'unknown'))
+            minute_window = int(time.time() / 300)
+            key = f"{event_type}_{app_name}_{minute_window}"
+        elif event_type in ['CPU_USAGE_ALARM', 'CPU_TEMPERATURE_ALARM']:
+            minute_window = int(time.time() / 300)
+            key = f"{event_type}_{minute_window}"
         
         elif event_type == 'UPS_ONBATT_LOWBATT':
             # UPS切换到电池供电：按时间（5分钟）去重
@@ -449,6 +477,14 @@ class MultiPlatformNotifier:
             content += '\n' + self._build_app_crash_content(event_data)
         elif event_type == 'APP_UPDATE_FAILED':
             content += '\n' + self._build_app_update_failed_content(event_data)
+        elif event_type == 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION':
+            content += '\n' + self._build_app_start_failed_content(event_data)
+        elif event_type == 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE':
+            content += '\n' + self._build_app_auto_start_failed_content(event_data)
+        elif event_type == 'CPU_USAGE_ALARM':
+            content += '\n' + self._build_cpu_usage_alarm_content(event_data)
+        elif event_type == 'CPU_TEMPERATURE_ALARM':
+            content += '\n' + self._build_cpu_temperature_alarm_content(event_data)
         elif event_type == 'UPS_ONBATT':
             content += '\n' + self._build_ups_onbatt_content(event_data)
         elif event_type == 'UPS_ONBATT_LOWBATT':
@@ -619,6 +655,32 @@ class MultiPlatformNotifier:
             content += f"📦 来源模块: {from_src}\n"
         
         return content
+
+    def _build_app_start_failed_content(self, event_data: Dict[str, Any]) -> str:
+        """构建应用启动失败（本地运行异常）事件内容"""
+        return self._build_app_crash_content(event_data)
+
+    def _build_app_auto_start_failed_content(self, event_data: Dict[str, Any]) -> str:
+        """构建应用自启动失败（Docker 不可用）事件内容"""
+        content = self._build_app_crash_content(event_data)
+        content += "⚠️ 原因: Docker 服务不可用\n"
+        return content
+
+    def _build_cpu_usage_alarm_content(self, event_data: Dict[str, Any]) -> str:
+        """构建 CPU 使用率告警内容"""
+        content = ""
+        data = event_data.get('data', {})
+        threshold = data.get('THRESHOLD', 0)
+        content += f"📊 使用率阈值: {threshold}%\n"
+        return content
+
+    def _build_cpu_temperature_alarm_content(self, event_data: Dict[str, Any]) -> str:
+        """构建 CPU 温度告警内容"""
+        content = ""
+        data = event_data.get('data', {})
+        threshold = data.get('THRESHOLD', 0)
+        content += f"🌡️ 温度阈值: {threshold}°C\n"
+        return content
     
     def _build_ups_onbatt_content(self, event_data: Dict[str, Any]) -> str:
         """构建UPS切换到电池供电事件内容"""
@@ -671,17 +733,34 @@ class MultiPlatformNotifier:
                 user = event_data.get('user', '未知用户')
                 content = content_template.format(user=user)
             elif event_type == 'FoundDisk':
-                # 硬盘发现事件，填充硬盘信息
-                name = event_data.get('name', '')
-                model = event_data.get('model', '')
-                serial = event_data.get('serial', '')
-                disk_info = f"{name}、型号{model}、序列号{serial}" if any([name, model, serial]) else '未知'
-                content = content_template.format(disk_info=disk_info)
-            elif event_type in ['APP_CRASH', 'APP_UPDATE_FAILED']:
+                # 硬盘发现事件，只保留设备名称
+                name = event_data.get('name', '未知设备')
+                content = content_template.format(disk_name=name)
+            elif event_type in ['DiskWakeup', 'DiskSpindown']:
+                # 磁盘事件，处理单个或多个磁盘设备
+                if 'merged_disks' in event_data:
+                    # 合并的磁盘事件
+                    disks = event_data['merged_disks']
+                    disk_names = [disk.get('disk', '未知磁盘') for disk in disks]
+                    disk_devices = ', '.join(disk_names)
+                    content = content_template.format(disk_devices=disk_devices)
+                else:
+                    # 单个磁盘事件
+                    disk_name = event_data.get('disk', '未知磁盘')
+                    content = content_template.format(disk_devices=disk_name)
+            elif event_type in ['APP_CRASH', 'APP_UPDATE_FAILED', 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION', 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE']:
                 # 应用事件，填充应用名称
                 data = event_data.get('data', {})
                 app_name = data.get('DISPLAY_NAME', data.get('APP_NAME', '未知应用'))
                 content = content_template.format(name=app_name)
+            elif event_type == 'CPU_USAGE_ALARM':
+                data = event_data.get('data', {})
+                threshold = data.get('THRESHOLD', 0)
+                content = content_template.format(threshold=threshold)
+            elif event_type == 'CPU_TEMPERATURE_ALARM':
+                data = event_data.get('data', {})
+                threshold = data.get('THRESHOLD', 0)
+                content = content_template.format(threshold=threshold)
             else:
                 # 其他事件直接使用模板
                 content = content_template
