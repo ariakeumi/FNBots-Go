@@ -4,8 +4,14 @@
 
 ## 功能特性
 
-- 监控飞牛NAS系统日志事件
-- 支持多种事件类型：
+- 📊 **实时日志监控**：持续监控飞牛NAS系统日志事件
+- 🔔 **多平台通知**：支持企业微信、钉钉、飞书、Bark等主流通知平台
+- 🔄 **智能去重**：基于时间窗口的事件去重机制（默认300秒）
+- 💾 **磁盘事件合并**：智能合并相同类型的磁盘事件
+- 🛡️ **安全权限管理**：最小化权限设计，提升系统安全性
+- 📈 **HTTP连接池**：高效的HTTP连接管理和重试机制
+- 🐳 **容器化部署**：支持Docker和Docker Compose一键部署
+- 📋 **丰富事件类型**：支持多种系统事件监控：
   - 登录成功 (LoginSucc)
   - 登录二次校验 (LoginSucc2FA1)
   - 退出登录 (Logout)
@@ -21,6 +27,11 @@
   - UPS切换到市电供电 (UPS_ONLINE)
   - 磁盘唤醒 (DiskWakeup)
   - 磁盘休眠 (DiskSpindown)
+  - 系统启动完成 (SystemBootComplete)
+  - 网络连接变化 (NetworkStateChanged)
+  - 存储空间不足 (StorageLowSpace)
+  - 系统更新可用 (SystemUpdateAvailable)
+  - 硬件故障检测 (HardwareFailureDetected)
 - 支持多平台通知：企业微信、钉钉、飞书、Bark
 - 事件去重机制（默认300秒窗口）
 - 磁盘事件智能合并功能
@@ -77,18 +88,36 @@ services:
 
 ### 环境变量说明
 
+#### 基础配置
 | 变量名 | 说明 | 默认值 | 必需 |
 |--------|------|--------|------|
 | WECHAT_WEBHOOK_URL | 企业微信机器人Webhook地址 | 无 | 否 |
 | DINGTALK_WEBHOOK_URL | 钉钉机器人Webhook地址 | 无 | 否 |
 | FEISHU_WEBHOOK_URL | 飞书机器人Webhook地址 | 无 | 否 |
 | BARK_URL | Bark推送URL | 无 | 否 |
-| MONITOR_EVENTS | 监控事件类型列表 | 全部事件 | 否 |
-| LOG_LEVEL | 日志级别 | INFO | 否 |
+
+#### 监控配置
+| 变量名 | 说明 | 默认值 | 必需 |
+|--------|------|--------|------|
+| MONITOR_EVENTS | 监控事件类型列表(逗号分隔) | 全部事件 | 否 |
+| LOG_LEVEL | 日志级别(DEBUG/INFO/WARNING/ERROR) | INFO | 否 |
 | DEDUP_WINDOW | 事件去重时间窗口(秒) | 300 | 否 |
+| CURSOR_DIR | 游标文件存储目录 | /tmp/cursor | 否 |
+
+#### HTTP配置
+| 变量名 | 说明 | 默认值 | 必需 |
+|--------|------|--------|------|
 | HTTP_POOL_SIZE | HTTP连接池大小 | 10 | 否 |
 | HTTP_RETRY_COUNT | HTTP请求重试次数 | 3 | 否 |
 | HTTP_TIMEOUT | HTTP请求超时时间(秒) | 10 | 否 |
+| HTTP_BACKOFF_FACTOR | 重试退避因子 | 0.3 | 否 |
+
+#### 系统配置
+| 变量名 | 说明 | 默认值 | 必需 |
+|--------|------|--------|------|
+| HEARTBEAT_INTERVAL | 心跳检测间隔(秒) | 30 | 否 |
+| FILE_CHECK_INTERVAL | 文件检查间隔(秒) | 60 | 否 |
+| MAX_LOG_AGE | 日志保留天数 | 7 | 否 |
 
 > ⚠️ **注意**：至少需要配置一个通知渠道（WECHAT_WEBHOOK_URL、DINGTALK_WEBHOOK_URL、FEISHU_WEBHOOK_URL或BARK_URL）
 
@@ -135,7 +164,7 @@ services:
 }
 ```
 
-## 使用说明
+## 快速开始
 
 ### 1. 准备通知渠道
 在相应平台创建群机器人并获取Webhook地址：
@@ -193,10 +222,24 @@ docker-compose down
 - **磁盘休眠**：`磁盘休眠: /dev/sda`
 - **发现硬盘**：`发现新硬盘: /dev/sdc`
 
-## 架构支持
+## 系统要求
 
+### 硬件要求
+- CPU: 1核心以上
+- 内存: 256MB以上
+- 存储: 100MB可用空间
+
+### 系统兼容性
+- ✅ 飞牛NAS系统
+- ✅ Ubuntu 20.04+
+- ✅ Debian 10+
+- ✅ CentOS 7+
+- ✅ 其他支持systemd的Linux发行版
+
+### 架构支持
 - ✅ AMD64 (x86_64)
 - ✅ ARM64 (aarch64)
+- ✅ ARMv7
 - ✅ 支持主流Linux发行版
 
 ## 项目结构
