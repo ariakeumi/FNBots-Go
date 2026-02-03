@@ -4,7 +4,6 @@ services:
     container_name: fn-message-bot
     restart: unless-stopped
     network_mode: host
-    privileged: true
     pid: host
     
     # 挂载系统日志目录（关键配置）
@@ -32,14 +31,6 @@ services:
       - BARK_URL=${BARK_URL}
       # 监控事件配置（可选，默认包含所有事件）
       - MONITOR_EVENTS=LoginSucc,LoginSucc2FA1,Logout,FoundDisk,APP_CRASH,APP_UPDATE_FAILED,UPS_ONBATT_LOWBATT,UPS_ONLINE,DiskWakeup,DiskSpindown
-      # 日志级别（可选）
-      - LOG_LEVEL=INFO
-      # 去重窗口（秒，默认300秒）
-      - DEDUP_WINDOW=300
-      # HTTP配置（可选）
-      - HTTP_POOL_SIZE=10
-      - HTTP_RETRY_COUNT=3
-      - HTTP_TIMEOUT=10
       - TZ=Asia/Shanghai
 
     cap_add:
@@ -49,5 +40,3 @@ services:
       - SYS_PTRACE
       # 审计日志读取权限
       - AUDIT_READ
-      # 移除高权限的SYS_ADMIN
-      # - SYS_ADMIN

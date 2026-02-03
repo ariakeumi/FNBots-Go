@@ -129,18 +129,23 @@ class ConnectionPool:
             
             response.raise_for_status()
             
-            result = response.json()
+            result = None
+            try:
+                result = response.json()
+            except Exception:
+                result = None
             
-            # 检查企业微信返回码
-            if result.get('errcode') == 0:
-                with self.stats_lock:
-                    self.stats.successful_requests += 1
-                return result
-            else:
+            # 企业微信/钉钉通常含 errcode；若存在且不为 0，视为失败
+            if isinstance(result, dict) and 'errcode' in result and result.get('errcode') != 0:
                 self.logger.error(f"API返回错误: {result}")
                 with self.stats_lock:
                     self.stats.failed_requests += 1
                 return None
+            
+            # 其他平台以 HTTP 2xx 作为成功
+            with self.stats_lock:
+                self.stats.successful_requests += 1
+            return result if result is not None else {}
                 
         except requests.exceptions.Timeout:
             self.logger.error(f"请求超时: {url}")

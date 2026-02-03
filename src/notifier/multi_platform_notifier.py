@@ -79,7 +79,7 @@ class MultiPlatformNotifier:
         'LoginSucc': '用户{user}登录成功',
         'LoginSucc2FA1': '用户{user}登录触发二次校验',
         'Logout': '用户{user}退出登录',
-        'FoundDisk': '发现新硬盘{disk_name}',
+        'FoundDisk': '发现新硬盘{disk_info}',
         'APP_CRASH': '应用{name}崩溃',
         'APP_UPDATE_FAILED': '应用{name}更新失败',
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '应用{name}启动失败',
@@ -89,8 +89,8 @@ class MultiPlatformNotifier:
         'UPS_ONBATT': 'UPS提示：UPS切换到电池供电',
         'UPS_ONBATT_LOWBATT': 'UPS提示：UPS电池电量低警告',
         'UPS_ONLINE': 'UPS提示：UPS切换到市电供电',
-        'DiskWakeup': '磁盘唤醒: {disk_devices}',
-        'DiskSpindown': '磁盘休眠: {disk_devices}',
+        'DiskWakeup': '磁盘被唤醒',
+        'DiskSpindown': '磁盘进入休眠状态',
         'APP_START': '飞牛NAS通知启动',
         'APP_STOP': '飞牛NAS通知已停止'
     }
@@ -370,21 +370,13 @@ class MultiPlatformNotifier:
         return result is not None
     
     def _send_to_bark(self, message: MultiPlatformMessage) -> bool:
-        """发送到Bark，支持{content}占位符替换功能"""
-        import urllib.parse
+        """发送到Bark，使用URL路径格式: bark_url/内容?title=标题"""
+        # 对内容和标题进行URL编码
+        encoded_content = urllib.parse.quote(message.content, safe='')
+        encoded_title = urllib.parse.quote(message.title, safe='')
         
-        # 检查URL中是否包含{content}占位符
-        if '{content}' in self.bark_url:
-            # 如果URL中包含{content}占位符，替换为推送内容
-            # 对内容进行URL编码
-            encoded_content = urllib.parse.quote(message.content, safe='')
-            # 替换占位符
-            bark_push_url = self.bark_url.replace('{content}', encoded_content)
-        else:
-            # 保持原来的推送逻辑：内容作为路径，标题作为查询参数
-            encoded_content = urllib.parse.quote(message.content, safe='')
-            encoded_title = urllib.parse.quote(message.title, safe='')
-            bark_push_url = f"{self.bark_url.rstrip('/')}/{encoded_content}?title={encoded_title}"
+        # 构造Bark推送URL，使用内容作为路径，标题作为查询参数
+        bark_push_url = f"{self.bark_url.rstrip('/')}/{encoded_content}?title={encoded_title}"
         
         # 使用连接池的GET方法发送请求
         result = self.connection_pool.get(bark_push_url)
@@ -733,21 +725,12 @@ class MultiPlatformNotifier:
                 user = event_data.get('user', '未知用户')
                 content = content_template.format(user=user)
             elif event_type == 'FoundDisk':
-                # 硬盘发现事件，只保留设备名称
-                name = event_data.get('name', '未知设备')
-                content = content_template.format(disk_name=name)
-            elif event_type in ['DiskWakeup', 'DiskSpindown']:
-                # 磁盘事件，处理单个或多个磁盘设备
-                if 'merged_disks' in event_data:
-                    # 合并的磁盘事件
-                    disks = event_data['merged_disks']
-                    disk_names = [disk.get('disk', '未知磁盘') for disk in disks]
-                    disk_devices = ', '.join(disk_names)
-                    content = content_template.format(disk_devices=disk_devices)
-                else:
-                    # 单个磁盘事件
-                    disk_name = event_data.get('disk', '未知磁盘')
-                    content = content_template.format(disk_devices=disk_name)
+                # 硬盘发现事件，填充硬盘信息
+                name = event_data.get('name', '')
+                model = event_data.get('model', '')
+                serial = event_data.get('serial', '')
+                disk_info = f"{name}、型号{model}、序列号{serial}" if any([name, model, serial]) else '未知'
+                content = content_template.format(disk_info=disk_info)
             elif event_type in ['APP_CRASH', 'APP_UPDATE_FAILED', 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION', 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE']:
                 # 应用事件，填充应用名称
                 data = event_data.get('data', {})

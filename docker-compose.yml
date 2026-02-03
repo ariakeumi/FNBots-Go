@@ -4,8 +4,6 @@ services:
     container_name: fn-message-bots
     restart: unless-stopped
     network_mode: host
-    # 移除privileged权限，改用最小必要权限
-    # privileged: true
     pid: host
 
     # 挂载系统日志目录（关键配置）

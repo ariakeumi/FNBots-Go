@@ -27,11 +27,6 @@
   - UPS切换到市电供电 (UPS_ONLINE)
   - 磁盘唤醒 (DiskWakeup)
   - 磁盘休眠 (DiskSpindown)
-  - 系统启动完成 (SystemBootComplete)
-  - 网络连接变化 (NetworkStateChanged)
-  - 存储空间不足 (StorageLowSpace)
-  - 系统更新可用 (SystemUpdateAvailable)
-  - 硬件故障检测 (HardwareFailureDetected)
 - 支持多平台通知：企业微信、钉钉、飞书、Bark
 - 事件去重机制（默认300秒窗口）
 - 磁盘事件智能合并功能
@@ -174,7 +169,7 @@ services:
 - **Bark**：下载Bark应用获取推送URL
 
 ### 2. 配置环境变量
-创建 `.env` 文件：
+通过系统环境变量或 Docker/Compose 传入，例如：
 ```bash
 # 至少配置一个通知渠道
 WECHAT_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key

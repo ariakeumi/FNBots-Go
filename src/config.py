@@ -39,6 +39,7 @@ class Config:
     
     # 系统路径配置
     journal_paths: List[str] = field(default_factory=lambda: [
+        "./test_logs/journal",  # 用于测试
         "/var/log/journal",
         "/run/log/journal"
     ])
@@ -62,19 +63,8 @@ class Config:
     
     def _load_from_file_skip_if_set(self):
         """从配置文件加载（可选），但跳过已设置的配置项"""
-        # 优先使用项目目录下的配置文件
-        config_paths = [
-            Path('./config/config.json'),  # 本地开发环境
-            Path('/app/config/config.json')  # 容器环境
-        ]
-        
-        config_file = None
-        for path in config_paths:
-            if path.exists():
-                config_file = path
-                break
-        
-        if config_file:
+        config_file = Path('/app/config/config.json')
+        if config_file.exists():
             try:
                 with open(config_file, 'r') as f:
                     data = json.load(f)
@@ -84,7 +74,7 @@ class Config:
                     if hasattr(self, key):
                         current_value = getattr(self, key)
                         # 如果当前值是默认值（空字符串）或者是一个占位符，则用配置文件中的值替换
-                        if not current_value or (isinstance(current_value, str) and current_value.startswith('${') and current_value.endswith('}')):
+                        if not current_value or (isinstance(value, str) and value.startswith('${') and value.endswith('}')):
                             # 如果值是字符串且包含环境变量占位符，则进行替换
                             if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
                                 env_var_name = value[2:-1]  # 提取变量名
@@ -93,8 +83,7 @@ class Config:
                             else:
                                 setattr(self, key, value)
             except Exception as e:
-                # 生产环境中静默处理配置文件错误
-                pass
+                print(f"警告: 配置文件读取失败 - {e}")
     
     def _load_from_env(self):
         """从环境变量加载配置"""

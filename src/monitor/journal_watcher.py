@@ -423,6 +423,8 @@ class JournalWatcher:
                     self.stats['errors'] += 1
         elif 'accepted' in lower_line:
             self.logger.info(f"检测到接受连接: {line}")
+        elif 'failed' in lower_line or 'failure' in lower_line:
+            self.logger.info(f"检测到失败事件: {line}")
     
     def _handle_journal_entry(self, entry: JournalEntry):
         """处理日志条目"""
