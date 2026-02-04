@@ -198,8 +198,8 @@ class JournalWatcher:
             self._start_backup_process()
             return
         
-        # 使用tail -f监控最新的syslog文件
-        cmd = ['tail', '-n', '0', '-f'] + available_paths
+        # 使用tail -F监控最新的syslog文件（支持日志轮转）
+        cmd = ['tail', '-n', '0', '-F'] + available_paths
         
         self.logger.info(f"执行syslog命令: {' '.join(cmd)}")
         
@@ -970,17 +970,14 @@ class JournalWatcher:
             if time.time() - self.last_heartbeat > self.heartbeat_interval * 2:
                 self.logger.warning("心跳超时，可能日志进程异常")
                 
-                # 检查进程状态
-                if self.process and self.process.poll() is not None:
-                    self.logger.error("日志进程已退出，尝试重启...")
-                    try:
-                        self._restart_log_process()
-                    except Exception as e:
-                        self.logger.error(f"重启失败: {e}")
-                else:
-                    # 即使没有日志输出，也更新心跳时间以避免频繁重启
-                    self.logger.info("日志进程仍在运行，更新心跳时间")
+                # 超时即尝试重启，避免tail进程“假存活”
+                self.logger.error("心跳超时，尝试重启日志进程...")
+                try:
+                    self._restart_log_process()
+                    # 重启后更新时间戳，避免重复触发
                     self.last_heartbeat = time.time()
+                except Exception as e:
+                    self.logger.error(f"重启失败: {e}")
             
             # 定期输出统计信息（每小时）
             if self.stats['entries_read'] % 3600 == 0 and self.stats['entries_read'] > 0:
