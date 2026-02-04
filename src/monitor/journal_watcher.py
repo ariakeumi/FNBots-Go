@@ -37,9 +37,11 @@ class JournalWatcher:
         self.process: Optional[subprocess.Popen] = None
         
         # 心跳监控
-        self.heartbeat_interval = 30
+        self.heartbeat_interval = 60  # 增加到60秒
+        self.heartbeat_timeout = 180  # 增加超时阈值到180秒（3分钟）
         self.last_heartbeat = time.time()
         self.heartbeat_thread: Optional[threading.Thread] = None
+        self.restart_cooldown = 0  # 重启冷却时间
         
         # 统计信息
         self.stats = {
@@ -311,7 +313,7 @@ class JournalWatcher:
         try:
             # 尝试解析为JSON
             data = json.loads(line)
-            entry = JournalEntry.from_json(data)
+            entry = JournalEntry.from_json(data, line)  # 传入原始行
             
             if entry:
                 # 更新心跳
@@ -326,9 +328,13 @@ class JournalWatcher:
             else:
                 # 如果不是期望的JSON格式，尝试解析普通日志
                 self._parse_generic_log_line(line)
+                # 即使是非JSON日志，也更新心跳
+                self.last_heartbeat = time.time()
         except json.JSONDecodeError:
             # 不是JSON格式，尝试解析为普通日志
             self._parse_generic_log_line(line)
+            # 更新心跳，表示进程仍在工作
+            self.last_heartbeat = time.time()
         except Exception as e:
             self.logger.error(f"处理日志行时出错: {e}")
             self.stats['errors'] += 1
@@ -976,6 +982,7 @@ class JournalWatcher:
                     self._restart_log_process()
                     # 重启后更新时间戳，避免重复触发
                     self.last_heartbeat = time.time()
+                    self.restart_cooldown = current_time  # 设置冷却时间
                 except Exception as e:
                     self.logger.error(f"重启失败: {e}")
             
@@ -985,21 +992,28 @@ class JournalWatcher:
     
     def _restart_log_process(self):
         """重启日志进程"""
+        self.logger.info("准备重启日志进程")
+        
         if self.process:
             try:
+                self.logger.info(f"当前进程PID: {getattr(self.process, 'pid', 'Unknown')}")
+                self.logger.info(f"进程状态: {getattr(self.process, 'poll', lambda: 'Unknown')()}")
+                
                 # 终止进程组
                 if hasattr(self.process, 'poll') and self.process.poll() is not None:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                     self.process.wait(timeout=5)
             except ProcessLookupError:
                 # 进程已经不存在
+                self.logger.info("进程已经不存在")
                 pass
-            except Exception:
+            except Exception as e:
+                self.logger.warning(f"优雅终止失败: {e}")
                 try:
                     if hasattr(self.process, 'poll') and self.process.poll() is not None:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                except:
-                    pass
+                except Exception as e2:
+                    self.logger.error(f"强制终止也失败: {e2}")
             
             self.process = None
         

@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional
 import re
 
 @dataclass
+@dataclass
 class JournalEntry:
     """Journal日志条目"""
     
@@ -19,10 +20,11 @@ class JournalEntry:
     message: str
     priority: int
     pid: int
-    raw_data: str
+    raw_data: str  # 处理后的JSON数据
+    original_line: str = ""  # 真正的原始日志行
     
     @classmethod
-    def from_json(cls, json_data: Dict[str, Any]) -> Optional['JournalEntry']:
+    def from_json(cls, json_data: Dict[str, Any], original_line: str = "") -> Optional['JournalEntry']:
         """从JSON数据创建日志条目"""
         try:
             # 解析时间戳
@@ -50,7 +52,8 @@ class JournalEntry:
                 message=json_data.get('MESSAGE', ''),
                 priority=int(json_data.get('PRIORITY', 6)),
                 pid=int(json_data.get('_PID', 0)),
-                raw_data=json.dumps(json_data, ensure_ascii=False)
+                raw_data=json.dumps(json_data, ensure_ascii=False),
+                original_line=original_line
             )
         except Exception as e:
             return None

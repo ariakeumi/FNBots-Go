@@ -31,6 +31,7 @@
     "/run/log/journal"
   ],
   "cursor_dir": "./cursor",
+  "log_storage_dir": "./logs",
   "heartbeat_interval": 30,
   "file_check_interval": 60,
   "max_log_age": 7

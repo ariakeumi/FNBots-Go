@@ -9,6 +9,7 @@ from threading import Timer
 
 from .models import JournalEntry
 from src.notifier.unified_notifier import UnifiedNotifier
+from src.utils.log_storage import LogStorage
 
 class EventProcessor:
     """事件处理器"""
@@ -24,6 +25,9 @@ class EventProcessor:
         self.notifier = notifier
         self.config = config
         self.logger = logging.getLogger(__name__)
+        
+        # 初始化日志存储器
+        self.log_storage = LogStorage(storage_dir=getattr(config, 'log_storage_dir', './logs'))
         
         # 事件处理器映射
         self.handlers = {
@@ -52,6 +56,38 @@ class EventProcessor:
         self.spindown_timer = None
         
         self.logger.info("事件处理器初始化完成")
+    
+    def _store_notification_log(self, event_type: str, event_data: Dict[str, Any], 
+                               raw_log: str, entry: JournalEntry, source: str = "journal"):
+        """
+        存储通知日志
+        
+        Args:
+            event_type: 事件类型
+            event_data: 事件数据
+            raw_log: 原始日志
+            entry: 日志条目对象
+            source: 日志来源
+        """
+        try:
+            # 优先使用真正的原始日志行，如果没有则使用传入的raw_log
+            actual_raw_log = entry.original_line if entry.original_line else raw_log
+            
+            # 存储日志到数据库
+            success = self.log_storage.store_log(
+                event_type=event_type,
+                raw_log=actual_raw_log,  # 使用真正的原始日志
+                processed_data=event_data,
+                source=source
+            )
+            
+            if success:
+                self.logger.debug(f"日志存储成功: {event_type}")
+            else:
+                self.logger.warning(f"日志存储失败: {event_type}")
+                
+        except Exception as e:
+            self.logger.error(f"存储日志时发生错误: {e}")
     
     def get_handler(self, event_type: str) -> Optional[Callable]:
         """
@@ -82,6 +118,15 @@ class EventProcessor:
             event_data=event_data,
             raw_log=raw_log,
             timestamp=timestamp
+        )
+        
+        # 存储原始日志
+        self._store_notification_log(
+            event_type='LoginSucc',
+            event_data=event_data,
+            raw_log=raw_log,
+            entry=entry,
+            source='journal'
         )
     
     def _handle_login_2fa(self, event_data: Dict[str, Any], entry: JournalEntry):
@@ -327,13 +372,6 @@ class EventProcessor:
     
     def _handle_disk_wakeup(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理磁盘唤醒事件"""
-        disk = event_data.get('disk', '')
-        model = event_data.get('model', '')
-        serial = event_data.get('serial', '')
-        
-        self.logger.info(f"磁盘唤醒: {disk} ({model})")
-        
-        # 添加到缓存并安排发送
         self._add_to_cache_and_schedule_send(
             self.disk_wakeup_cache, 
             'wakeup_timer', 
@@ -341,16 +379,13 @@ class EventProcessor:
             'DiskWakeup', 
             entry
         )
-    
+        
+        # 存储原始日志用于后续分析
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self._store_notification_log('DiskWakeup', event_data, raw_log, entry)
+
     def _handle_disk_spindown(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理磁盘休眠事件"""
-        disk = event_data.get('disk', '')
-        model = event_data.get('model', '')
-        serial = event_data.get('serial', '')
-        
-        self.logger.info(f"磁盘休眠: {disk} ({model})")
-        
-        # 添加到缓存并安排发送
         self._add_to_cache_and_schedule_send(
             self.disk_spindown_cache, 
             'spindown_timer', 
@@ -358,7 +393,11 @@ class EventProcessor:
             'DiskSpindown', 
             entry
         )
-    
+        
+        # 存储原始日志用于后续分析
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self._store_notification_log('DiskSpindown', event_data, raw_log, entry)
+
     def _send_merged_events(self, cache_list, event_type):
         """发送合并的磁盘事件"""
         if not cache_list:

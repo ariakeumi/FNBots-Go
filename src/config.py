@@ -44,6 +44,7 @@ class Config:
         "/run/log/journal"
     ])
     cursor_dir: str = "./cursor"
+    log_storage_dir: str = "./logs"  # 原始日志存储目录
     
     # 高级配置
     heartbeat_interval: int = 30
@@ -112,6 +113,10 @@ class Config:
         # 日志级别
         if log_level := os.getenv('LOG_LEVEL'):
             self.log_level = log_level.upper()
+        
+        # 日志存储目录
+        if log_storage_dir := os.getenv('LOG_STORAGE_DIR'):
+            self.log_storage_dir = log_storage_dir
         
         # HTTP配置
         if pool_size := os.getenv('HTTP_POOL_SIZE'):

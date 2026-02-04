@@ -42,7 +42,9 @@ def setup_logging(config) -> logging.Logger:
     logger.addHandler(console_handler)
     
     # 文件处理器
-    log_file = Path(config.log_dir) / f"monitor_{datetime.now().strftime('%Y%m%d')}.log"
+    # 确保使用项目根目录下的logs目录
+    project_root = Path(__file__).parent.parent
+    log_file = project_root / "logs" / f"monitor_{datetime.now().strftime('%Y%m%d')}.log"
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)
     file_handler.setLevel(getattr(logging, config.log_level))

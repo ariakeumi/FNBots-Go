@@ -27,139 +27,76 @@
   - UPS切换到市电供电 (UPS_ONLINE)
   - 磁盘唤醒 (DiskWakeup)
   - 磁盘休眠 (DiskSpindown)
-- 支持多平台通知：企业微信、钉钉、飞书、Bark
-- 事件去重机制（默认300秒窗口）
-- 磁盘事件智能合并功能
-- HTTP连接池管理和重试机制
-- 容器化部署支持
+- 🗃️ **日志存储分析**：自动存储触发通知的原始系统日志，支持后续问题分析和审计
 
-## 部署方式
+## 新增功能：日志存储与分析
 
-### Docker Compose 部署（推荐）
+### 功能特点
+- **自动存储**：当检测到需要推送的消息时，自动将原始系统日志存储到.log文件
+- **完整信息**：存储包括事件类型、时间戳、原始日志内容、处理后的数据等完整信息
+- **灵活查询**：支持按事件类型、时间范围等多种方式查询存储的日志
+- **数据导出**：支持将日志导出为JSON格式，便于进一步分析
+- **定期清理**：支持自动清理过期日志文件，节省存储空间
 
-```yaml
-services:
-  fn-message-bot:
-    image: sunanang/fn-message-bots:latest
-    container_name: fn-message-bot
-    restart: unless-stopped
-    network_mode: host
-    privileged: true
-    pid: host
-
-    volumes:
-      - /var/log/journal:/var/log/journal:ro
-      - /run/log/journal:/run/log/journal:ro
-      - /var/log/syslog:/var/log/syslog:ro
-      - ./data/logs:/app/logs:rw
-      - ./data/cursor:/tmp/cursor:rw
-      - ./config:/app/config:ro
-
-    environment:
-      # 通知渠道配置（至少配置一个）
-      - WECHAT_WEBHOOK_URL=${WECHAT_WEBHOOK_URL}
-      - DINGTALK_WEBHOOK_URL=${DINGTALK_WEBHOOK_URL}
-      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL}
-      - BARK_URL=${BARK_URL}
-      
-      # 监控配置
-      - MONITOR_EVENTS=LoginSucc,LoginSucc2FA1,Logout,FoundDisk,APP_CRASH,APP_UPDATE_FAILED,UPS_ONBATT_LOWBATT,UPS_ONLINE,DiskWakeup,DiskSpindown
-      - LOG_LEVEL=INFO
-      - DEDUP_WINDOW=300
-      
-      # HTTP配置
-      - HTTP_POOL_SIZE=10
-      - HTTP_RETRY_COUNT=3
-      - HTTP_TIMEOUT=10
-      
-      - TZ=Asia/Shanghai
-
-    cap_add:
-      - SYS_ADMIN
-      - DAC_READ_SEARCH
-      - SYS_PTRACE
-      - AUDIT_READ
+### 存储结构
+日志以JSON格式存储在.log文件中，每个事件类型每天生成一个独立的日志文件：
 ```
+logs/
+├── LoginSucc_2026-02-04.log
+├── APP_CRASH_2026-02-04.log
+└── FoundDisk_2026-02-04.log
 
-### 环境变量说明
-
-#### 基础配置
-| 变量名 | 说明 | 默认值 | 必需 |
-|--------|------|--------|------|
-| WECHAT_WEBHOOK_URL | 企业微信机器人Webhook地址 | 无 | 否 |
-| DINGTALK_WEBHOOK_URL | 钉钉机器人Webhook地址 | 无 | 否 |
-| FEISHU_WEBHOOK_URL | 飞书机器人Webhook地址 | 无 | 否 |
-| BARK_URL | Bark推送URL | 无 | 否 |
-
-#### 监控配置
-| 变量名 | 说明 | 默认值 | 必需 |
-|--------|------|--------|------|
-| MONITOR_EVENTS | 监控事件类型列表(逗号分隔) | 全部事件 | 否 |
-| LOG_LEVEL | 日志级别(DEBUG/INFO/WARNING/ERROR) | INFO | 否 |
-| DEDUP_WINDOW | 事件去重时间窗口(秒) | 300 | 否 |
-| CURSOR_DIR | 游标文件存储目录 | /tmp/cursor | 否 |
-
-#### HTTP配置
-| 变量名 | 说明 | 默认值 | 必需 |
-|--------|------|--------|------|
-| HTTP_POOL_SIZE | HTTP连接池大小 | 10 | 否 |
-| HTTP_RETRY_COUNT | HTTP请求重试次数 | 3 | 否 |
-| HTTP_TIMEOUT | HTTP请求超时时间(秒) | 10 | 否 |
-| HTTP_BACKOFF_FACTOR | 重试退避因子 | 0.3 | 否 |
-
-#### 系统配置
-| 变量名 | 说明 | 默认值 | 必需 |
-|--------|------|--------|------|
-| HEARTBEAT_INTERVAL | 心跳检测间隔(秒) | 30 | 否 |
-| FILE_CHECK_INTERVAL | 文件检查间隔(秒) | 60 | 否 |
-| MAX_LOG_AGE | 日志保留天数 | 7 | 否 |
-
-> ⚠️ **注意**：至少需要配置一个通知渠道（WECHAT_WEBHOOK_URL、DINGTALK_WEBHOOK_URL、FEISHU_WEBHOOK_URL或BARK_URL）
-
-## 配置文件
-
-### config/config.json 示例
-
-```json
+每行包含一个JSON对象：
 {
-  "wechat_webhook_url": "${WECHAT_WEBHOOK_URL}",
-  "dingtalk_webhook_url": "${DINGTALK_WEBHOOK_URL}",
-  "feishu_webhook_url": "${FEISHU_WEBHOOK_URL}",
-  "bark_url": "${BARK_URL}",
-  "monitor_events": [
-    "LoginSucc",
-    "LoginSucc2FA1", 
-    "Logout",
-    "FoundDisk",
-    "APP_CRASH",
-    "APP_UPDATE_FAILED",
-    "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
-    "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE",
-    "CPU_USAGE_ALARM",
-    "CPU_TEMPERATURE_ALARM",
-    "UPS_ONBATT",
-    "UPS_ONBATT_LOWBATT",
-    "UPS_ONLINE",
-    "DiskWakeup",
-    "DiskSpindown"
-  ],
-  "log_level": "INFO",
-  "http_pool_size": 10,
-  "http_retry_count": 3,
-  "http_timeout": 10,
-  "dedup_window": 300,
-  "journal_paths": [
-    "/var/log/journal",
-    "/run/log/journal"
-  ],
-  "cursor_dir": "./cursor",
-  "heartbeat_interval": 30,
-  "file_check_interval": 60,
-  "max_log_age": 7
+    "event_type": "LoginSucc",
+    "timestamp": "2026-02-04 22:32:40",
+    "raw_log": "原始日志内容",
+    "processed_data": {"user": "admin", "IP": "192.168.1.100"},
+    "notification_sent": true,
+    "stored_at": "2026-02-04 22:32:40",
+    "source": "journal"
 }
 ```
 
-## 快速开始
+### 存储位置
+- **默认路径**：`./logs/`
+- **文件命名**：`{事件类型}_{日期}.log`（如：LoginSucc_2026-02-04.log）
+- **可配置**：通过配置文件或环境变量 `LOG_STORAGE_DIR` 修改存储目录
+
+### 管理工具
+提供 `tools/log_manager.py` 脚本用于管理存储的日志：
+
+```
+# 查看存储统计信息
+python tools/log_manager.py stats
+
+# 查看最近24小时的日志
+python tools/log_manager.py recent --hours 24
+
+# 按事件类型查询日志
+python tools/log_manager.py type LoginSucc --limit 10
+
+# 导出日志到文件
+python tools/log_manager.py export ./logs.json --event-type APP_CRASH
+
+# 清理30天前的旧日志
+python tools/log_manager.py cleanup 30
+```
+
+### 配置选项
+在配置文件中可以设置日志存储目录：
+```
+{
+  "log_storage_dir": "./stored_logs"
+}
+```
+
+或通过环境变量：
+```bash
+export LOG_STORAGE_DIR="/path/to/storage"
+```
+
+## 使用方法
 
 ### 1. 准备通知渠道
 在相应平台创建群机器人并获取Webhook地址：
@@ -170,7 +107,7 @@ services:
 
 ### 2. 配置环境变量
 通过系统环境变量或 Docker/Compose 传入，例如：
-```bash
+```
 # 至少配置一个通知渠道
 WECHAT_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key
 # DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=your-token
@@ -183,7 +120,7 @@ LOG_LEVEL=INFO
 ```
 
 ### 3. 启动服务
-```bash
+```
 # 使用docker-compose启动
 docker-compose up -d
 
@@ -249,9 +186,13 @@ FNMessageBots/
 │   └── main.py            # 主程序入口
 ├── config/                # 配置文件目录
 │   └── config.json        # 主配置文件
-├── data/                  # 数据目录
-│   ├── logs/              # 日志文件
-│   └── cursor/            # 游标文件
+├── logs/                  # 日志文件目录（统一存储）
+│   ├── monitor_*.log      # 应用程序运行日志
+│   ├── LoginSucc_*.log    # 登录成功事件日志
+│   └── 其他事件类型日志文件
+├── cursor/                # 游标文件目录
+├── tools/                 # 管理工具目录
+│   └── log_manager.py     # 日志管理工具
 ├── Dockerfile             # Docker构建文件
 ├── docker-compose.yml     # Docker编排文件
 ├── requirements.txt       # Python依赖
