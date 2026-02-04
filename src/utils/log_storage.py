@@ -34,11 +34,11 @@ class LogStorage:
         Args:
             storage_dir: 存储目录路径
         """
-        # 确保使用项目根目录下的logs目录
+        # 统一使用项目根目录下的data/logs目录
         if storage_dir == "./logs":
-            # 获取项目根目录
+            # 获取项目根目录 (__file__ 在 src/utils/log_storage.py 中)
             project_root = Path(__file__).parent.parent.parent
-            self.storage_dir = project_root / "logs"
+            self.storage_dir = project_root / "data" / "logs"
         else:
             self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)

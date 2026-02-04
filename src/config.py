@@ -43,7 +43,7 @@ class Config:
         "/var/log/journal",
         "/run/log/journal"
     ])
-    cursor_dir: str = "./cursor"
+    cursor_dir: str = "./data/cursor"  # 统一使用data目录下的cursor
     log_storage_dir: str = "./logs"  # 原始日志存储目录
     
     # 高级配置

@@ -88,7 +88,10 @@ class HealthChecker:
     
     def check_log_directory(self) -> bool:
         """检查日志目录"""
-        log_dir = Path(self.config.log_dir)
+        # 统一使用项目根目录下的data/logs目录
+        # __file__ 在 src/utils/health_check.py 中，所以需要向上三级到达项目根目录
+        project_root = Path(__file__).parent.parent.parent
+        log_dir = project_root / "data" / "logs"
         
         if not log_dir.exists():
             try:

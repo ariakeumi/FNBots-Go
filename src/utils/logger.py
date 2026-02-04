@@ -42,9 +42,14 @@ def setup_logging(config) -> logging.Logger:
     logger.addHandler(console_handler)
     
     # 文件处理器
-    # 确保使用项目根目录下的logs目录
-    project_root = Path(__file__).parent.parent
-    log_file = project_root / "logs" / f"monitor_{datetime.now().strftime('%Y%m%d')}.log"
+    # 统一使用项目根目录下的data/logs目录
+    # __file__ 在 src/utils/logger.py 中，所以需要向上三级到达项目根目录
+    project_root = Path(__file__).parent.parent.parent
+    log_dir = project_root / "data" / "logs"
+    
+    # 确保日志目录存在
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"monitor_{datetime.now().strftime('%Y%m%d')}.log"
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)
     file_handler.setLevel(getattr(logging, config.log_level))
