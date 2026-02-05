@@ -5,6 +5,8 @@ import time
 import logging
 import subprocess
 import threading
+import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Callable, Optional, List, Any
@@ -125,7 +127,6 @@ class JournalWatcher:
     
     def _check_journalctl_available(self) -> bool:
         """检查journalctl是否可用"""
-        import shutil
         return shutil.which('journalctl') is not None
     
     def _check_syslog_available(self) -> bool:
@@ -209,7 +210,6 @@ class JournalWatcher:
         
         self.logger.info(f"执行syslog命令: {' '.join(cmd)}")
         
-        import subprocess
         try:
             self.process = subprocess.Popen(
                 cmd,
@@ -229,7 +229,6 @@ class JournalWatcher:
     
     def _start_backup_process(self):
         """启动备用进程保持运行"""
-        import subprocess
         # 使用一个长时间运行的进程，但不会消耗太多CPU
         self.process = subprocess.Popen(['sleep', '86400'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.log_mode = "backup"
@@ -382,7 +381,6 @@ class JournalWatcher:
         if login_pattern.search(line):
             if 'LoginSucc' in self.event_handlers:
                 # 提取用户和IP信息
-                import re
                 user_match = re.search(r'(?:user|for)\s+(\w+)', line, re.IGNORECASE)
                 user = user_match.group(1) if user_match else 'unknown'
                 ip_match = re.search(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', line)
@@ -397,8 +395,7 @@ class JournalWatcher:
                 
                 try:
                     # 创建一个虚拟的日志条目
-                    from .models import JournalEntry
-                    import json
+                    # JournalEntry 已在模块顶部导入
                     virtual_entry = JournalEntry(
                         cursor='',
                         timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -418,7 +415,6 @@ class JournalWatcher:
         elif 'logout' in lower_line or 'logged out' in lower_line or 'session closed' in lower_line:
             if 'Logout' in self.event_handlers:
                 # 提取用户信息
-                import re
                 user_match = re.search(r'(?:user|for)\s+(\w+)', line, re.IGNORECASE)
                 user = user_match.group(1) if user_match else 'unknown'
                 ip_match = re.search(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', line)
@@ -432,8 +428,7 @@ class JournalWatcher:
                 
                 try:
                     # 创建一个虚拟的日志条目
-                    from .models import JournalEntry
-                    import json
+                    # JournalEntry 已在模块顶部导入
                     virtual_entry = JournalEntry(
                         cursor="",
                         timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -596,7 +591,6 @@ class JournalWatcher:
                 print(f"[警告] UPS启动，切换到电池供电, 时间: {timestamp}")
                 
                 # 创建一个虚拟的日志条目来包含完整的事件数据
-                from .models import JournalEntry
                 # 从原始日志行中提取主机名
                 raw_line = entry.original_line or entry.message
                 parts = raw_line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
@@ -627,7 +621,6 @@ class JournalWatcher:
                 print(f"[警告] UPS电池电量低警告, 时间: {timestamp}")
                 
                 # 创建一个虚拟的日志条目来包含完整的事件数据
-                from .models import JournalEntry
                 # 从原始日志行中提取主机名
                 raw_line = entry.original_line or entry.message
                 parts = raw_line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
@@ -671,8 +664,7 @@ class JournalWatcher:
     
     def _parse_funan_events(self, line: str) -> bool:
         """解析飞牛NAS的MAINEVENT和TRIMEVENT格式"""
-        import re
-        import json
+        # json 已在模块顶部导入
         
         # 检查是否为MAINEVENT格式
         mainevent_match = re.search(r'MAINEVENT\[\d+\]:\s*MAINEVENT:(\{.*?\})', line)
@@ -729,7 +721,6 @@ class JournalWatcher:
                         print(f"[磁盘休眠] 磁盘: {disk}, 型号: {model}, 序列号: {serial}, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据
-                    from .models import JournalEntry
                     # 从原始日志行中提取主机名
                     parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
                     hostname = parts[2] if len(parts) >= 3 else 'unknown'
@@ -774,7 +765,6 @@ class JournalWatcher:
                     print(f"[错误] 应用: {display_name}, 崩溃异常退出, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据
-                    from .models import JournalEntry
                     # 从原始日志行中提取主机名
                     parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
                     hostname = parts[2] if len(parts) >= 3 else 'unknown'
@@ -805,7 +795,6 @@ class JournalWatcher:
                     print(f"[错误] 应用: {display_name}, 更新失败, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据
-                    from .models import JournalEntry
                     # 从原始日志行中提取主机名
                     parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
                     hostname = parts[2] if len(parts) >= 3 else 'unknown'
@@ -914,7 +903,6 @@ class JournalWatcher:
                     print(f"[警告] UPS启动，切换到电池供电, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据
-                    from .models import JournalEntry
                     # 从原始日志行中提取主机名
                     parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
                     hostname = parts[2] if len(parts) >= 3 else 'unknown'
@@ -943,7 +931,6 @@ class JournalWatcher:
                     print(f"[警告] UPS电池电量低警告, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据
-                    from .models import JournalEntry
                     # 从原始日志行中提取主机名
                     parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
                     hostname = parts[2] if len(parts) >= 3 else 'unknown'
@@ -974,7 +961,6 @@ class JournalWatcher:
                     print(f"[通知] UPS启动，切换到市电供电模式, 时间: {timestamp}")
                     
                     # 创建一个虚拟的日志条目来包含完整的事件数据
-                    from .models import JournalEntry
                     # 从原始日志行中提取主机名
                     parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
                     hostname = parts[2] if len(parts) >= 3 else 'unknown'

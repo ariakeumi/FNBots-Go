@@ -9,6 +9,13 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Any
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+from src.config import Config
+
 class HealthChecker:
     """健康检查器"""
     
@@ -117,7 +124,8 @@ class HealthChecker:
     def check_python_process(self) -> bool:
         """检查Python进程"""
         try:
-            import psutil
+            if psutil is None:
+                return True
             current_pid = psutil.Process().pid
             
             # 检查是否有其他监控进程在运行
@@ -165,9 +173,6 @@ def perform_health_check(config_path: str = None) -> int:
         退出码（0=健康，1=异常）
     """
     try:
-        # 动态导入配置（避免循环导入）
-        from src.config import Config
-        
         config = Config()
         checker = HealthChecker(config)
         report = checker.get_status_report()

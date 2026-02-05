@@ -3,6 +3,7 @@ import sys
 import signal
 import socket
 import os
+import traceback
 from datetime import datetime
 
 # 添加src目录到Python路径，解决模块导入问题
@@ -101,7 +102,6 @@ class Application:
             return True
         except Exception as e:
             print(f"初始化失败: {e}")
-            import traceback
             traceback.print_exc()
             return False
     
@@ -149,7 +149,6 @@ class Application:
             print("\\n接收到中断信号...")
         except Exception as e:
             print(f"运行时错误: {e}")
-            import traceback
             traceback.print_exc()
         finally:
             self.shutdown()

@@ -107,7 +107,6 @@ class JournalEntry:
     
     def _extract_additional_formats(self) -> Optional[Dict[str, Any]]:
         """从其他日志格式中提取数据"""
-        import re
         message_lower = self.message.lower()
         
         # 尝试检测登录事件

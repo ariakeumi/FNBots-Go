@@ -27,7 +27,7 @@ class EventProcessor:
         self.logger = logging.getLogger(__name__)
         
         # 初始化日志存储器
-        self.log_storage = LogStorage(storage_dir=getattr(config, 'log_storage_dir', './logs'))
+        self.log_storage = LogStorage(storage_dir=getattr(config, 'log_dir', './data/logs'))
         
         # 事件处理器映射
         self.handlers = {
