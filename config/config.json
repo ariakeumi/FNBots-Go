@@ -6,6 +6,7 @@
   "monitor_events": [
     "LoginSucc", 
     "LoginSucc2FA1", 
+    "LoginFail",
     "Logout", 
     "FoundDisk", 
     "APP_CRASH",
@@ -21,7 +22,7 @@
     "DiskSpindown"
   ],
   "log_level": "INFO",
-  "log_dir": "./logs",
+  "log_dir": "./data/logs",
   "http_pool_size": 10,
   "http_retry_count": 3,
   "http_timeout": 10,
@@ -30,8 +31,7 @@
     "/var/log/journal",
     "/run/log/journal"
   ],
-  "cursor_dir": "./cursor",
-  "log_storage_dir": "./logs",
+  "cursor_dir": "./data/cursor",
   "heartbeat_interval": 30,
   "file_check_interval": 60,
   "max_log_age": 7

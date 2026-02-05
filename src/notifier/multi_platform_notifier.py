@@ -57,6 +57,7 @@ class MultiPlatformNotifier:
     EVENT_TITLES = {
         'LoginSucc': '🔐 飞牛NAS-登录成功通知',
         'LoginSucc2FA1': '🔐 飞牛NAS-二次验证登录',
+        'LoginFail': '❌ 飞牛NAS-登录失败告警',
         'Logout': '👋 飞牛NAS-退出登录通知',
         'FoundDisk': '💾 飞牛NAS-发现新硬盘',
         'APP_CRASH': '💥 飞牛NAS-应用崩溃告警',
@@ -78,6 +79,7 @@ class MultiPlatformNotifier:
     BARK_EVENT_CONTENTS = {
         'LoginSucc': '用户{user}登录成功',
         'LoginSucc2FA1': '用户{user}登录触发二次校验',
+        'LoginFail': '用户{user}登录失败，请检查是否有异常尝试。',
         'Logout': '用户{user}退出登录',
         'FoundDisk': '发现新硬盘{disk_info}',
         'APP_CRASH': '应用{name}崩溃',
@@ -99,6 +101,7 @@ class MultiPlatformNotifier:
     EVENT_NOTES = {
         'LoginSucc': '💡 系统检测到用户登录成功，请确认是否为本人操作。',
         'LoginSucc2FA1': '⚠️ 用户已完成两步验证的第一步，等待二次验证。',
+        'LoginFail': '⚠️ 系统检测到登录失败，请检查是否有异常尝试。',
         'Logout': '📝 用户已安全退出系统。',
         'FoundDisk': '💾 检测到新存储设备接入系统。',
         'APP_CRASH': '❗ 应用程序异常退出，建议检查应用状态和日志。',
@@ -461,7 +464,7 @@ class MultiPlatformNotifier:
         content = f"🕐 {timestamp}"
         
         # 根据事件类型添加特定字段
-        if event_type in ['LoginSucc', 'LoginSucc2FA1', 'Logout']:
+        if event_type in ['LoginSucc', 'LoginSucc2FA1', 'LoginFail', 'Logout']:
             content += '\n' + self._build_login_content(event_data)
         elif event_type == 'FoundDisk':
             content += '\n' + self._build_disk_content(event_data)
@@ -720,7 +723,7 @@ class MultiPlatformNotifier:
             content_template = self.BARK_EVENT_CONTENTS[event_type]
             
             # 根据事件类型填充具体内容
-            if event_type in ['LoginSucc', 'LoginSucc2FA1', 'Logout']:
+            if event_type in ['LoginSucc', 'LoginSucc2FA1', 'LoginFail', 'Logout']:
                 # 登录相关事件，填充用户名
                 user = event_data.get('user', '未知用户')
                 content = content_template.format(user=user)

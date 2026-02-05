@@ -20,7 +20,7 @@ class Config:
     
     # 监控配置
     monitor_events: List[str] = field(default_factory=lambda: [
-        "LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH",
+        "LoginSucc", "LoginSucc2FA1", "LoginFail", "Logout", "FoundDisk", "APP_CRASH",
         "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
         "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
         "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
@@ -29,7 +29,7 @@ class Config:
     
     # 日志配置
     log_level: str = "INFO"
-    log_dir: str = "./logs"
+    log_dir: str = "./data/logs"
     
     # 连接池配置
     http_pool_size: int = 10
@@ -44,7 +44,6 @@ class Config:
         "/run/log/journal"
     ])
     cursor_dir: str = "./data/cursor"  # 统一使用data目录下的cursor
-    log_storage_dir: str = "./logs"  # 原始日志存储目录
     
     # 高级配置
     heartbeat_interval: int = 30
@@ -89,7 +88,7 @@ class Config:
     def _load_from_env(self):
         """从环境变量加载配置"""
         # 端口配置（保留此行以兼容旧版本，但不实际使用）
-        port = os.getenv('PORT')
+        # port = os.getenv('PORT')  # 未使用，保留会造成误导
         
         # Webhook URLs
         if wechat_webhook := os.getenv('WECHAT_WEBHOOK_URL'):
@@ -114,9 +113,6 @@ class Config:
         if log_level := os.getenv('LOG_LEVEL'):
             self.log_level = log_level.upper()
         
-        # 日志存储目录
-        if log_storage_dir := os.getenv('LOG_STORAGE_DIR'):
-            self.log_storage_dir = log_storage_dir
         
         # HTTP配置
         if pool_size := os.getenv('HTTP_POOL_SIZE'):
@@ -139,28 +135,7 @@ class Config:
             self.file_check_interval = int(file_check)
         
         if max_age := os.getenv('MAX_LOG_AGE'):
-            self.max_age = int(max_age)
-    
-    def _load_from_file(self):
-        """从配置文件加载（可选）"""
-        config_file = Path('/app/config/config.json')
-        if config_file.exists():
-            try:
-                with open(config_file, 'r') as f:
-                    data = json.load(f)
-                
-                # 覆盖配置
-                for key, value in data.items():
-                    if hasattr(self, key):
-                        # 如果值是字符串且包含环境变量占位符，则进行替换
-                        if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
-                            env_var_name = value[2:-1]  # 提取变量名
-                            env_value = os.getenv(env_var_name, '')  # 获取环境变量值，不存在则为空字符串
-                            setattr(self, key, env_value)
-                        else:
-                            setattr(self, key, value)
-            except Exception as e:
-                print(f"警告: 配置文件读取失败 - {e}")
+            self.max_log_age = int(max_age)
     
     def _validate(self):
         """验证配置"""
@@ -184,7 +159,7 @@ class Config:
             raise ValueError("必须配置至少一个监控事件")
         
         # 验证事件类型
-        valid_events = {"LoginSucc", "LoginSucc2FA1", "Logout", "FoundDisk", "APP_CRASH",
+        valid_events = {"LoginSucc", "LoginSucc2FA1", "LoginFail", "Logout", "FoundDisk", "APP_CRASH",
                         "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
                         "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
                         "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",

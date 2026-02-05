@@ -42,12 +42,7 @@ def setup_logging(config) -> logging.Logger:
     logger.addHandler(console_handler)
     
     # 文件处理器
-    # 统一使用项目根目录下的data/logs目录
-    # __file__ 在 src/utils/logger.py 中，所以需要向上三级到达项目根目录
-    project_root = Path(__file__).parent.parent.parent
-    log_dir = project_root / "data" / "logs"
-    
-    # 确保日志目录存在
+    log_dir = Path(config.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"monitor_{datetime.now().strftime('%Y%m%d')}.log"
     file_handler = logging.FileHandler(log_file)
@@ -59,8 +54,8 @@ def setup_logging(config) -> logging.Logger:
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('requests').setLevel(logging.WARNING)
     
-    # 启动日志清理线程
-    start_log_cleanup_thread(config)
+    # 启动日志清理线程（使用实际日志目录）
+    start_log_cleanup_thread(config, log_dir)
     
     return logger
 
@@ -95,17 +90,18 @@ def cleanup_old_logs(log_dir: str, max_age_days: int = 7):
         except (ValueError, OSError) as e:
             print(f"处理日志文件时出错 {log_file}: {e}")
 
-def start_log_cleanup_thread(config):
+def start_log_cleanup_thread(config, log_dir: Path):
     """
     启动日志清理线程
     
     Args:
         config: 配置对象
+        log_dir: 实际日志目录
     """
     def cleanup_loop():
         while True:
             try:
-                cleanup_old_logs(config.log_dir, config.max_log_age)
+                cleanup_old_logs(str(log_dir), config.max_log_age)
                 # 每24小时运行一次清理
                 time.sleep(24 * 3600)
             except Exception as e:

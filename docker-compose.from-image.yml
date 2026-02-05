@@ -30,7 +30,7 @@ services:
       # Bark推送URL (可选)
       - BARK_URL=${BARK_URL}
       # 监控事件配置（可选，默认包含所有事件）
-      - MONITOR_EVENTS=LoginSucc,LoginSucc2FA1,Logout,FoundDisk,APP_CRASH,APP_UPDATE_FAILED,UPS_ONBATT_LOWBATT,UPS_ONLINE,DiskWakeup,DiskSpindown
+      - MONITOR_EVENTS=LoginSucc,LoginSucc2FA1,LoginFail,Logout,FoundDisk,APP_CRASH,APP_UPDATE_FAILED,UPS_ONBATT_LOWBATT,UPS_ONLINE,DiskWakeup,DiskSpindown
       - TZ=Asia/Shanghai
 
     cap_add:

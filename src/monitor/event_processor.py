@@ -33,6 +33,7 @@ class EventProcessor:
         self.handlers = {
             'LoginSucc': self._handle_login_success,
             'LoginSucc2FA1': self._handle_login_2fa,
+            'LoginFail': self._handle_login_fail,
             'Logout': self._handle_logout,
             'FoundDisk': self._handle_found_disk,
             'APP_CRASH': self._handle_app_crash,
@@ -143,6 +144,24 @@ class EventProcessor:
         
         self.notifier.send_notification(
             event_type='LoginSucc2FA1',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+
+    def _handle_login_fail(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理登录失败事件"""
+        user = event_data.get('user', '')
+        ip = event_data.get('IP', '')
+        via = event_data.get('via', '')
+        
+        self.logger.warning(f"登录失败: {user}@{ip}")
+        
+        raw_log = getattr(entry, 'raw_data', '{}')
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        
+        self.notifier.send_notification(
+            event_type='LoginFail',
             event_data=event_data,
             raw_log=raw_log,
             timestamp=timestamp

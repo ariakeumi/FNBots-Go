@@ -35,13 +35,13 @@ class JournalWatcher:
         # 运行状态
         self.running = False
         self.process: Optional[subprocess.Popen] = None
+        self.log_mode: str = "unknown"  # syslog | journalctl | backup
+        self.syslog_paths_used: List[str] = []
         
         # 心跳监控
         self.heartbeat_interval = 60  # 增加到60秒
-        self.heartbeat_timeout = 180  # 增加超时阈值到180秒（3分钟）
         self.last_heartbeat = time.time()
         self.heartbeat_thread: Optional[threading.Thread] = None
-        self.restart_cooldown = 0  # 重启冷却时间
         
         # 统计信息
         self.stats = {
@@ -111,12 +111,15 @@ class JournalWatcher:
         # 检查系统支持的日志方式
         # 优先检查syslog方式，因为其更广泛兼容
         if self._check_syslog_available():
+            self.log_mode = "syslog"
             self.logger.info("使用syslog方式监控日志")
             self._start_syslog_process()
         elif self._check_journalctl_available():
+            self.log_mode = "journalctl"
             self.logger.info("使用journalctl方式监控日志")
             self._start_journalctl_process()
         else:
+            self.log_mode = "backup"
             self.logger.warning("未找到合适的日志监控方式，启动备用进程保持运行")
             self._start_backup_process()
     
@@ -199,6 +202,7 @@ class JournalWatcher:
             self.logger.error("未找到可用的syslog文件，使用备用进程")
             self._start_backup_process()
             return
+        self.syslog_paths_used = available_paths[:]
         
         # 使用tail -F监控最新的syslog文件（支持日志轮转）
         cmd = ['tail', '-n', '0', '-F'] + available_paths
@@ -228,6 +232,7 @@ class JournalWatcher:
         import subprocess
         # 使用一个长时间运行的进程，但不会消耗太多CPU
         self.process = subprocess.Popen(['sleep', '86400'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.log_mode = "backup"
         self.logger.info("启动备用进程保持运行")
     
     def _build_journalctl_command(self, cursor: str = None, paths: List[str] = None) -> List[str]:
@@ -274,39 +279,56 @@ class JournalWatcher:
     
     def _process_output(self):
         """处理日志输出"""
-        if not self.process or not self.process.stdout:
-            self.logger.warning("没有有效的输出流，使用备用处理方式")
-            # 如果没有输出流，保持进程运行而不崩溃
-            while self.running:
+        current_pid = None
+
+        while self.running:
+            if not self.process or not self.process.stdout:
+                self.logger.warning("没有有效的输出流，使用备用处理方式")
                 time.sleep(1)
-            return
-        
-        buffer = ""
-        while self.running and self.process.poll() is None:
+                continue
+
+            # 若进程退出，等待心跳线程重启
+            if self.process.poll() is not None:
+                time.sleep(1)
+                continue
+
+            # 启动 stderr 读取线程（避免缓冲区阻塞）
+            if self.process.stderr and self.process.pid != current_pid:
+                current_pid = self.process.pid
+                threading.Thread(
+                    target=self._consume_stderr,
+                    name=f"JournalStderrReader-{current_pid}",
+                    daemon=True
+                ).start()
+
             try:
-                # 读取字符（非阻塞）
-                char = self.process.stdout.read(1)
-                if not char:
+                line = self.process.stdout.readline()
+                if not line:
                     time.sleep(0.1)
                     continue
-                
-                buffer += char
-                
-                # 检查是否完成一个JSON对象或新的一行
-                if '\n' in buffer:
-                    lines = buffer.split('\n')
-                    buffer = lines[-1]  # 保留最后一行未完成的部分
-                    for line in lines[:-1]:  # 处理完成的行
-                        if line.strip():
-                            # 尝试解析JSON，如果不是JSON则按普通日志处理
-                            self._process_line(line.strip())
-                    
+
+                line = line.strip()
+                if line:
+                    self._process_line(line)
                     self.stats['entries_read'] += 1
-                    
             except Exception as e:
                 self.logger.error(f"处理输出时出错: {e}")
                 self.stats['errors'] += 1
                 time.sleep(1)
+
+    def _consume_stderr(self):
+        """消费子进程stderr，避免阻塞"""
+        try:
+            while self.running and self.process and self.process.stderr:
+                line = self.process.stderr.readline()
+                if not line:
+                    time.sleep(0.1)
+                    continue
+                msg = line.strip()
+                if msg:
+                    self.logger.debug(f"journalctl stderr: {msg}")
+        except Exception:
+            return
     
     def _process_line(self, line: str):
         """处理单行日志（支持JSON和普通文本）"""
@@ -356,7 +378,8 @@ class JournalWatcher:
         
         # 检测并处理常见的登录/登出事件
         lower_line = line.lower()
-        if 'login' in lower_line or 'logged in' in lower_line or 'session opened' in lower_line:
+        login_pattern = re.compile(r'\blogin\b|\blogged in\b|session opened', re.IGNORECASE)
+        if login_pattern.search(line):
             if 'LoginSucc' in self.event_handlers:
                 # 提取用户和IP信息
                 import re
@@ -430,7 +453,8 @@ class JournalWatcher:
         elif 'accepted' in lower_line:
             self.logger.info(f"检测到接受连接: {line}")
         elif 'failed' in lower_line or 'failure' in lower_line:
-            self.logger.info(f"检测到失败事件: {line}")
+            # 失败类日志噪声较大，不在控制台输出
+            pass
     
     def _handle_journal_entry(self, entry: JournalEntry):
         """处理日志条目"""
@@ -463,6 +487,12 @@ class JournalWatcher:
                     via = event_data.get('via', '')
                     timestamp = entry.timestamp
                     print(f"[登录二次校验] 用户: {user}, IP: {ip}, 方式: {via}, 时间: {timestamp}")
+                elif template == 'LoginFail':
+                    user = event_data.get('user', '')
+                    ip = event_data.get('IP', '')
+                    via = event_data.get('via', '')
+                    timestamp = entry.timestamp
+                    print(f"[登录失败] 用户: {user}, IP: {ip}, 方式: {via}, 时间: {timestamp}")
                 elif template == 'Logout':
                     user = event_data.get('user', '')
                     ip = event_data.get('IP', '')
@@ -568,17 +598,19 @@ class JournalWatcher:
                 # 创建一个虚拟的日志条目来包含完整的事件数据
                 from .models import JournalEntry
                 # 从原始日志行中提取主机名
-                parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
+                raw_line = entry.original_line or entry.message
+                parts = raw_line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
                 hostname = parts[2] if len(parts) >= 3 else 'unknown'
                 virtual_entry = JournalEntry(
                     cursor='',
                     timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     hostname=hostname,
                     syslog_identifier='TRIMEVENT',
-                    message=line,
+                    message=raw_line,
                     priority=6,
                     pid=0,
-                    raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                    raw_data=json.dumps({'message': raw_line}, ensure_ascii=False),
+                    original_line=raw_line
                 )
                 
                 # 如果有UPS_ONBATT处理器，也调用它
@@ -597,17 +629,19 @@ class JournalWatcher:
                 # 创建一个虚拟的日志条目来包含完整的事件数据
                 from .models import JournalEntry
                 # 从原始日志行中提取主机名
-                parts = line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
+                raw_line = entry.original_line or entry.message
+                parts = raw_line.split(None, 3)  # 分割为最多4个部分：日期 时间 主机名 其余内容
                 hostname = parts[2] if len(parts) >= 3 else 'unknown'
                 virtual_entry = JournalEntry(
                     cursor='',
                     timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     hostname=hostname,
                     syslog_identifier='TRIMEVENT',
-                    message=line,
+                    message=raw_line,
                     priority=6,
                     pid=0,
-                    raw_data=json.dumps({'message': line}, ensure_ascii=False)
+                    raw_data=json.dumps({'message': raw_line}, ensure_ascii=False),
+                    original_line=raw_line
                 )
                 
                 # 如果有UPS_ONBATT_LOWBATT处理器，也调用它
@@ -641,7 +675,7 @@ class JournalWatcher:
         import json
         
         # 检查是否为MAINEVENT格式
-        mainevent_match = re.search(r'MAINEVENT\[\d+\]:\s*MAINEVENT:(\{.*?\})(?=\s|$)', line)
+        mainevent_match = re.search(r'MAINEVENT\[\d+\]:\s*MAINEVENT:(\{.*?\})', line)
         if mainevent_match:
             try:
                 event_json = mainevent_match.group(1)
@@ -663,6 +697,12 @@ class JournalWatcher:
                         via = event_data.get('via', '')
                         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         print(f"[登录二次校验] 用户: {user}, IP: {ip}, 方式: {via}, 时间: {timestamp}")
+                    elif template == 'LoginFail':
+                        user = event_data.get('user', '')
+                        ip = event_data.get('IP', '')
+                        via = event_data.get('via', '')
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"[登录失败] 用户: {user}, IP: {ip}, 方式: {via}, 时间: {timestamp}")
                     elif template == 'Logout':
                         user = event_data.get('user', '')
                         ip = event_data.get('IP', '')
@@ -719,7 +759,7 @@ class JournalWatcher:
                 pass
         
         # 检查是否为TRIMEVENT格式
-        trimevent_match = re.search(r'TRIMEVENT\[\d+\]:\s*TRIMEVENT:(\{.*?\})(?=\s|$)', line)
+        trimevent_match = re.search(r'TRIMEVENT\[\d+\]:\s*TRIMEVENT:(\{.*?\})', line)
         if trimevent_match:
             try:
                 event_json = trimevent_match.group(1)
@@ -975,14 +1015,18 @@ class JournalWatcher:
             # 检查心跳
             if time.time() - self.last_heartbeat > self.heartbeat_interval * 2:
                 self.logger.warning("心跳超时，可能日志进程异常")
-                
-                # 超时即尝试重启，避免tail进程“假存活”
-                self.logger.error("心跳超时，尝试重启日志进程...")
+                # 先尝试读取日志源进行探测（不推送），确认是否还能读取
+                if self._probe_log_source():
+                    self.logger.info("日志探测成功，更新心跳时间")
+                    self.last_heartbeat = time.time()
+                    continue
+
+                # 探测失败才重启，避免误杀
+                self.logger.error("日志探测失败，尝试重启日志进程...")
                 try:
                     self._restart_log_process()
                     # 重启后更新时间戳，避免重复触发
                     self.last_heartbeat = time.time()
-                    self.restart_cooldown = current_time  # 设置冷却时间
                 except Exception as e:
                     self.logger.error(f"重启失败: {e}")
             
@@ -1000,7 +1044,7 @@ class JournalWatcher:
                 self.logger.info(f"进程状态: {getattr(self.process, 'poll', lambda: 'Unknown')()}")
                 
                 # 终止进程组
-                if hasattr(self.process, 'poll') and self.process.poll() is not None:
+                if hasattr(self.process, 'poll') and self.process.poll() is None:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                     self.process.wait(timeout=5)
             except ProcessLookupError:
@@ -1010,7 +1054,7 @@ class JournalWatcher:
             except Exception as e:
                 self.logger.warning(f"优雅终止失败: {e}")
                 try:
-                    if hasattr(self.process, 'poll') and self.process.poll() is not None:
+                    if hasattr(self.process, 'poll') and self.process.poll() is None:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
                 except Exception as e2:
                     self.logger.error(f"强制终止也失败: {e2}")
@@ -1020,6 +1064,39 @@ class JournalWatcher:
         # 重新启动日志监控
         self._start_log_process()
         self.logger.info("日志进程已重启")
+
+    def _probe_log_source(self) -> bool:
+        """探测日志源是否可读（不推送）"""
+        try:
+            if self.log_mode == "syslog" and self.syslog_paths_used:
+                for path in self.syslog_paths_used:
+                    try:
+                        with open(path, 'r', errors='ignore') as f:
+                            # 读取最后一行（快速探测）
+                            f.seek(0, os.SEEK_END)
+                            if f.tell() == 0:
+                                continue
+                            # 回退一小段读取尾部
+                            offset = min(f.tell(), 4096)
+                            f.seek(-offset, os.SEEK_END)
+                            tail = f.read()
+                            if tail.strip():
+                                return True
+                    except Exception:
+                        continue
+                return False
+            if self.log_mode == "journalctl":
+                # 使用journalctl读取一条日志进行探测
+                result = subprocess.run(
+                    ['journalctl', '-n', '1', '--no-pager'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                return result.returncode == 0 and bool(result.stdout.strip())
+            return False
+        except Exception:
+            return False
     
     def _read_cursor(self) -> Optional[str]:
         """读取保存的游标"""

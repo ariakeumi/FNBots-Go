@@ -9,7 +9,6 @@ from typing import Dict, Any, Optional
 import re
 
 @dataclass
-@dataclass
 class JournalEntry:
     """Journal日志条目"""
     
@@ -65,7 +64,7 @@ class JournalEntry:
     def extract_event_data(self) -> Optional[Dict[str, Any]]:
         """从消息中提取事件数据"""
         # 匹配 MAINEVENT 格式: MAINEVENT[1593]: MAINEVENT:{...}
-        mainevent_match = re.search(r'MAINEVENT\[\d+\]:\s*MAINEVENT:(\{.*?\})(?=\s|$)', self.message)
+        mainevent_match = re.search(r'MAINEVENT\[\d+\]:\s*MAINEVENT:(\{.*?\})', self.message)
         if mainevent_match:
             try:
                 event_json = mainevent_match.group(1)
@@ -76,7 +75,7 @@ class JournalEntry:
                 pass
         
         # 匹配 TRIMEVENT 格式: TRIMEVENT[2543]: TRIMEVENT:{...}
-        trimevent_match = re.search(r'TRIMEVENT\[\d+\]:\s*TRIMEVENT:(\{.*?\})(?=\s|$)', self.message)
+        trimevent_match = re.search(r'TRIMEVENT\[\d+\]:\s*TRIMEVENT:(\{.*?\})', self.message)
         if trimevent_match:
             try:
                 event_json = trimevent_match.group(1)
@@ -88,8 +87,8 @@ class JournalEntry:
         
         # 备用：匹配不带方括号的格式
         patterns = {
-            'MAINEVENT': re.compile(r'MAINEVENT:\s*(\{.*?\})(?=\s|$)'),
-            'TRIMEVENT': re.compile(r'TRIMEVENT:\s*(\{.*?\})(?=\s|$)')
+            'MAINEVENT': re.compile(r'MAINEVENT:\s*(\{.*?\})'),
+            'TRIMEVENT': re.compile(r'TRIMEVENT:\s*(\{.*?\})')
         }
         
         for event_type, pattern in patterns.items():
