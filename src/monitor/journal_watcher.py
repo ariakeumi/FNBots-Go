@@ -377,8 +377,30 @@ class JournalWatcher:
         
         # 检测并处理常见的登录/登出事件
         lower_line = line.lower()
-        login_pattern = re.compile(r'\blogin\b|\blogged in\b|session opened', re.IGNORECASE)
-        if login_pattern.search(line):
+        
+        # 更精确的登录检测模式，避免误匹配
+        # 只匹配明确的登录相关关键词，排除包含在其他单词中的情况
+        login_keywords = [
+            r'\bsession opened\b',
+            r'\buser logged in\b',
+            r'\blogin success\b',
+            r'\bauthentication success\b',
+            r'\bpam:.*authentication success\b'
+        ]
+        login_pattern = '|'.join(login_keywords)
+        login_regex = re.compile(login_pattern, re.IGNORECASE)
+        
+        # 额外的排除过滤器，避免误匹配系统服务名称等
+        exclude_patterns = [
+            r'\b[a-zA-Z]+nas\b',  # 排除包含 nas 的词汇（如 LandoNas）
+            r'\b[a-zA-Z]+samba\b',  # 排除包含 samba 的词汇
+            r'\bdump_workgroups\b',  # 排除 Samba 的工作组转储日志
+            r'\bnmbd\b',  # 排除 NetBIOS 名称服务守护进程
+            r'\bsmbd\b'   # 排除 SMB 服务守护进程
+        ]
+        exclude_regex = re.compile('|'.join(exclude_patterns), re.IGNORECASE)
+        
+        if login_regex.search(line) and not exclude_regex.search(line):
             if 'LoginSucc' in self.event_handlers:
                 # 提取用户和IP信息
                 user_match = re.search(r'(?:user|for)\s+(\w+)', line, re.IGNORECASE)
@@ -412,7 +434,8 @@ class JournalWatcher:
                 except Exception as e:
                     self.logger.error(f"处理登录事件失败: {e}")
                     self.stats['errors'] += 1
-        elif 'logout' in lower_line or 'logged out' in lower_line or 'session closed' in lower_line:
+        # 更精确的登出检测模式，使用相同的排除过滤器
+        elif re.search(r'\bsession closed\b|\buser logged out\b|\blogout success\b', line, re.IGNORECASE) and not exclude_regex.search(line):
             if 'Logout' in self.event_handlers:
                 # 提取用户信息
                 user_match = re.search(r'(?:user|for)\s+(\w+)', line, re.IGNORECASE)
