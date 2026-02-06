@@ -49,5 +49,3 @@ services:
       - SYS_PTRACE
       # 审计日志读取权限
       - AUDIT_READ
-      # 移除高权限的SYS_ADMIN
-      # - SYS_ADMIN

@@ -281,19 +281,20 @@ class JournalWatcher:
         current_pid = None
 
         while self.running:
-            if not self.process or not self.process.stdout:
+            proc = self.process
+            if not proc or not proc.stdout:
                 self.logger.warning("没有有效的输出流，使用备用处理方式")
                 time.sleep(1)
                 continue
 
             # 若进程退出，等待心跳线程重启
-            if self.process.poll() is not None:
+            if proc.poll() is not None:
                 time.sleep(1)
                 continue
 
             # 启动 stderr 读取线程（避免缓冲区阻塞）
-            if self.process.stderr and self.process.pid != current_pid:
-                current_pid = self.process.pid
+            if proc.stderr and proc.pid != current_pid:
+                current_pid = proc.pid
                 threading.Thread(
                     target=self._consume_stderr,
                     name=f"JournalStderrReader-{current_pid}",
@@ -301,7 +302,7 @@ class JournalWatcher:
                 ).start()
 
             try:
-                line = self.process.stdout.readline()
+                line = proc.stdout.readline()
                 if not line:
                     time.sleep(0.1)
                     continue
@@ -375,32 +376,21 @@ class JournalWatcher:
         # 这里可以根据需要添加对不同类型日志的解析
         self.logger.debug(f"解析通用日志行: {line[:100]}...")
         
-        # 检测并处理常见的登录/登出事件
+        # 检测并处理常见的登录/登出事件（严格匹配）
         lower_line = line.lower()
-        
-        # 更精确的登录检测模式，避免误匹配
-        # 只匹配明确的登录相关关键词，排除包含在其他单词中的情况
-        login_keywords = [
-            r'\bsession opened\b',
-            r'\buser logged in\b',
-            r'\blogin success\b',
-            r'\bauthentication success\b',
-            r'\bpam:.*authentication success\b'
-        ]
-        login_pattern = '|'.join(login_keywords)
-        login_regex = re.compile(login_pattern, re.IGNORECASE)
-        
-        # 额外的排除过滤器，避免误匹配系统服务名称等
-        exclude_patterns = [
-            r'\b[a-zA-Z]+nas\b',  # 排除包含 nas 的词汇（如 LandoNas）
-            r'\b[a-zA-Z]+samba\b',  # 排除包含 samba 的词汇
-            r'\bdump_workgroups\b',  # 排除 Samba 的工作组转储日志
-            r'\bnmbd\b',  # 排除 NetBIOS 名称服务守护进程
-            r'\bsmbd\b'   # 排除 SMB 服务守护进程
-        ]
-        exclude_regex = re.compile('|'.join(exclude_patterns), re.IGNORECASE)
-        
-        if login_regex.search(line) and not exclude_regex.search(line):
+        login_pattern = re.compile(
+            r'(^|\s)sshd\[\d+\]:\s*accepted\s+',
+            re.IGNORECASE
+        )
+        pam_open_pattern = re.compile(
+            r'pam_unix\(.*\):\s*session opened',
+            re.IGNORECASE
+        )
+        login_msg_pattern = re.compile(
+            r'\blogin:\s+',
+            re.IGNORECASE
+        )
+        if login_pattern.search(line) or pam_open_pattern.search(line) or login_msg_pattern.search(line):
             if 'LoginSucc' in self.event_handlers:
                 # 提取用户和IP信息
                 user_match = re.search(r'(?:user|for)\s+(\w+)', line, re.IGNORECASE)
@@ -434,8 +424,8 @@ class JournalWatcher:
                 except Exception as e:
                     self.logger.error(f"处理登录事件失败: {e}")
                     self.stats['errors'] += 1
-        # 更精确的登出检测模式，使用相同的排除过滤器
-        elif re.search(r'\bsession closed\b|\buser logged out\b|\blogout success\b', line, re.IGNORECASE) and not exclude_regex.search(line):
+        # 更精确的登出检测模式
+        elif re.search(r'\bsession closed\b|\buser logged out\b|\blogout success\b', line, re.IGNORECASE):
             if 'Logout' in self.event_handlers:
                 # 提取用户信息
                 user_match = re.search(r'(?:user|for)\s+(\w+)', line, re.IGNORECASE)
