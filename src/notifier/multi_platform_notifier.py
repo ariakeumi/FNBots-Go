@@ -717,46 +717,11 @@ class MultiPlatformNotifier:
     
     def _build_bark_message(self, event_type: str, event_data: Dict[str, Any], 
                            timestamp: str, raw_log: str) -> MultiPlatformMessage:
-        """构建Bark消息，标题统一为'飞牛NAS通知'，内容根据事件类型定制"""
-        title = "飞牛NAS通知"
-        
-        # 根据事件类型构建内容
-        if event_type in self.BARK_EVENT_CONTENTS:
-            content_template = self.BARK_EVENT_CONTENTS[event_type]
-            
-            # 根据事件类型填充具体内容
-            if event_type in ['LoginSucc', 'LoginSucc2FA1', 'LoginFail', 'Logout']:
-                # 登录相关事件，填充用户名
-                user = event_data.get('user', '未知用户')
-                content = content_template.format(user=user)
-            elif event_type == 'FoundDisk':
-                # 硬盘发现事件，填充硬盘信息
-                name = event_data.get('name', '')
-                model = event_data.get('model', '')
-                serial = event_data.get('serial', '')
-                disk_info = f"{name}、型号{model}、序列号{serial}" if any([name, model, serial]) else '未知'
-                content = content_template.format(disk_info=disk_info)
-            elif event_type in ['APP_CRASH', 'APP_UPDATE_FAILED', 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION', 'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE']:
-                # 应用事件，填充应用名称
-                data = event_data.get('data', {})
-                app_name = data.get('DISPLAY_NAME', data.get('APP_NAME', '未知应用'))
-                content = content_template.format(name=app_name)
-            elif event_type == 'CPU_USAGE_ALARM':
-                data = event_data.get('data', {})
-                threshold = data.get('THRESHOLD', 0)
-                content = content_template.format(threshold=threshold)
-            elif event_type == 'CPU_TEMPERATURE_ALARM':
-                data = event_data.get('data', {})
-                threshold = data.get('THRESHOLD', 0)
-                content = content_template.format(threshold=threshold)
-            else:
-                # 其他事件直接使用模板
-                content = content_template
-        else:
-            # 默认内容
-            content = f"{event_type}: 事件发生"
-        
-        return MultiPlatformMessage(title=title, content=content)
+        """构建Bark消息，内容与其他渠道一致"""
+        message = self._build_message(event_type, event_data, timestamp, raw_log)
+        # Bark正文第一行包含标题
+        merged_content = f"{message.title}\n\n{message.content}"
+        return MultiPlatformMessage(title=message.title, content=merged_content)
     
     def send_system_notification(self, event_type: str, message: str, additional_info: Dict[str, Any] = None) -> bool:
         """
