@@ -373,15 +373,17 @@ class MultiPlatformNotifier:
         return result is not None
     
     def _send_to_bark(self, message: MultiPlatformMessage) -> bool:
-        """发送到Bark，使用URL路径格式: bark_url/内容?title=标题"""
-        # 对内容和标题进行URL编码
+        """发送到Bark，支持 {content} 占位符或直连URL"""
         encoded_content = urllib.parse.quote(message.content, safe='')
-        encoded_title = urllib.parse.quote(message.title, safe='')
+
+        if '{content}' in self.bark_url:
+            # 仅替换内容占位符，不改动用户参数，也不添加 title
+            bark_push_url = self.bark_url.replace('{content}', encoded_content)
+        else:
+            # 直连URL：拼接 /飞牛NAS通知/内容
+            encoded_title = urllib.parse.quote(message.title, safe='')
+            bark_push_url = f"{self.bark_url.rstrip('/')}/{encoded_title}/{encoded_content}"
         
-        # 构造Bark推送URL，使用内容作为路径，标题作为查询参数
-        bark_push_url = f"{self.bark_url.rstrip('/')}/{encoded_content}?title={encoded_title}"
-        
-        # 使用连接池的GET方法发送请求
         result = self.connection_pool.get(bark_push_url)
         return result
     
