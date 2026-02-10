@@ -13,6 +13,7 @@
 - 🐳 **容器化部署**：支持Docker和Docker Compose一键部署
 - 📋 **丰富事件类型**：支持多种系统事件监控：
   - 登录成功 (LoginSucc)
+  - 登录失败 (LoginFail)
   - 登录二次校验 (LoginSucc2FA1)
   - 退出登录 (Logout)
   - 发现硬盘 (FoundDisk)
@@ -27,6 +28,15 @@
   - UPS切换到市电供电 (UPS_ONLINE)
   - 磁盘唤醒 (DiskWakeup)
   - 磁盘休眠 (DiskSpindown)
+  - SSH服务启动 (SSH_SERVICE_STARTED)
+  - SSH服务停止 (SSH_SERVICE_STOPPED)
+  - SSH监听端口 (SSH_LISTEN)
+  - SSH无效用户尝试 (SSH_INVALID_USER)
+  - SSH认证失败 (SSH_AUTH_FAILED)
+  - SSH登录成功 (SSH_LOGIN_SUCCESS)
+  - SSH会话开启 (SSH_SESSION_OPENED)
+  - SSH断开连接 (SSH_DISCONNECTED)
+  - SSH会话关闭 (SSH_SESSION_CLOSED)
 - 🗃️ **日志存储分析**：自动存储触发通知的原始系统日志，支持后续问题分析和审计
 - 🩺 **稳定心跳监控**：syslog 与 eventlogger 采用统一游标式文件跟踪，长时间空闲也不会误判重启
 

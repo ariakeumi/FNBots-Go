@@ -30,19 +30,9 @@ services:
       - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL}
       # Bark推送URL (可选)
       - BARK_URL=${BARK_URL}
-      # 监控事件配置（可选，默认包含所有事件）
-      - MONITOR_EVENTS=LoginSucc,LoginSucc2FA1,LoginFail,Logout,FoundDisk,APP_CRASH,APP_UPDATE_FAILED,UPS_ONBATT_LOWBATT,UPS_ONLINE,DiskWakeup,DiskSpindown,SSH_SERVICE_STARTED,SSH_SERVICE_STOPPED,SSH_LISTEN,SSH_INVALID_USER,SSH_AUTH_FAILED,SSH_LOGIN_SUCCESS,SSH_SESSION_OPENED,SSH_DISCONNECTED,SSH_SESSION_CLOSED
-      # 日志级别（可选）
-      - LOG_LEVEL=INFO
-      # 去重窗口（秒，默认300秒）
-      - DEDUP_WINDOW=300
-      # HTTP配置（可选）
-      - HTTP_POOL_SIZE=10
-      - HTTP_RETRY_COUNT=3
-      - HTTP_TIMEOUT=10
+
       - TZ=Asia/Shanghai
 
-    # 最小必要权限配置
     cap_add:
       # 读取系统日志所需的权限
       - DAC_READ_SEARCH
