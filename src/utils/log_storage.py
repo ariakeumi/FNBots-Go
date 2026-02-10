@@ -3,12 +3,13 @@
 使用.log文件存储需要推送的原始系统日志，便于后期问题分析
 """
 
-import os
 import json
 import logging
+import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 from dataclasses import dataclass
 
 
@@ -26,13 +27,15 @@ class StoredLogEntry:
 
 class LogStorage:
     """日志存储管理器 - 使用.log文件存储"""
-    
-    def __init__(self, storage_dir: str = "./logs"):
+
+    def __init__(self, storage_dir: str = "./logs", days_to_keep: int = 30, enable_auto_cleanup: bool = True):
         """
         初始化日志存储
-        
+
         Args:
             storage_dir: 存储目录路径
+            days_to_keep: 保留日志的天数，默认30天
+            enable_auto_cleanup: 是否启用自动清理，默认True
         """
         # 统一使用项目根目录下的data/logs目录
         if storage_dir == "./logs":
@@ -42,12 +45,74 @@ class LogStorage:
         else:
             self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # 设置日志
         self.logger = logging.getLogger(__name__)
-        
-        self.logger.info(f"日志存储初始化完成，存储目录: {self.storage_dir}")
-    
+
+        # 清理配置
+        self.days_to_keep = days_to_keep
+        self.cleanup_stop_flag = threading.Event()
+        self.cleanup_thread = None
+
+        # 启动自动清理线程
+        if enable_auto_cleanup:
+            self._start_cleanup_thread()
+
+        self.logger.info(f"日志存储初始化完成，存储目录: {self.storage_dir}, 保留天数: {days_to_keep}")
+
+    def _start_cleanup_thread(self):
+        """启动日志清理线程"""
+        def cleanup_loop():
+            """清理循环"""
+            # 启动后立即执行一次清理
+            try:
+                self.logger.info("执行初始日志清理...")
+                deleted = self.cleanup_old_logs(self.days_to_keep)
+                if deleted > 0:
+                    self.logger.info(f"初始清理完成，删除了 {deleted} 个旧日志文件")
+            except Exception as e:
+                self.logger.error(f"初始日志清理失败: {e}")
+
+            # 每24小时执行一次清理
+            while not self.cleanup_stop_flag.is_set():
+                try:
+                    # 使用短间隔检查停止标志，避免关闭时等待太久
+                    for _ in range(24 * 3600):  # 24小时 = 86400秒
+                        if self.cleanup_stop_flag.wait(1):  # 每秒检查一次
+                            self.logger.info("日志清理线程收到停止信号")
+                            return
+
+                    # 执行清理
+                    self.logger.info("开始定期日志清理...")
+                    deleted = self.cleanup_old_logs(self.days_to_keep)
+                    if deleted > 0:
+                        self.logger.info(f"定期清理完成，删除了 {deleted} 个旧日志文件")
+                    else:
+                        self.logger.debug("定期清理完成，没有需要删除的文件")
+
+                except Exception as e:
+                    self.logger.error(f"日志清理线程出错: {e}")
+                    # 出错后等待1小时再重试
+                    for _ in range(3600):
+                        if self.cleanup_stop_flag.wait(1):
+                            return
+
+        # 启动后台清理线程
+        self.cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True, name="LogStorageCleanup")
+        self.cleanup_thread.start()
+        self.logger.info(f"日志清理线程已启动，每24小时清理一次，保留 {self.days_to_keep} 天内的数据")
+
+    def stop_cleanup_thread(self):
+        """停止日志清理线程"""
+        if self.cleanup_thread and self.cleanup_thread.is_alive():
+            self.logger.info("正在停止日志清理线程...")
+            self.cleanup_stop_flag.set()
+            self.cleanup_thread.join(timeout=5)  # 最多等待5秒
+            if self.cleanup_thread.is_alive():
+                self.logger.warning("日志清理线程未能在5秒内停止")
+            else:
+                self.logger.info("日志清理线程已停止")
+
     def store_log(self, event_type: str, raw_log: str, processed_data: Dict[str, Any], 
                   source: str = "unknown") -> bool:
         """

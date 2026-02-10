@@ -25,9 +25,14 @@ class EventProcessor:
         self.notifier = notifier
         self.config = config
         self.logger = logging.getLogger(__name__)
-        
+
         # 初始化日志存储器
-        self.log_storage = LogStorage(storage_dir=getattr(config, 'log_dir', './data/logs'))
+        log_retention_days = getattr(config, 'log_retention_days', 30)
+        self.log_storage = LogStorage(
+            storage_dir=getattr(config, 'log_dir', './data/logs'),
+            days_to_keep=log_retention_days,
+            enable_auto_cleanup=True
+        )
         
         # 事件处理器映射
         self.handlers = {
@@ -36,6 +41,15 @@ class EventProcessor:
             'LoginFail': self._handle_login_fail,
             'Logout': self._handle_logout,
             'FoundDisk': self._handle_found_disk,
+            'SSH_SERVICE_STARTED': self._handle_ssh_service_started,
+            'SSH_SERVICE_STOPPED': self._handle_ssh_service_stopped,
+            'SSH_LISTEN': self._handle_ssh_listen,
+            'SSH_INVALID_USER': self._handle_ssh_invalid_user,
+            'SSH_AUTH_FAILED': self._handle_ssh_auth_failed,
+            'SSH_LOGIN_SUCCESS': self._handle_ssh_login_success,
+            'SSH_SESSION_OPENED': self._handle_ssh_session_opened,
+            'SSH_DISCONNECTED': self._handle_ssh_disconnected,
+            'SSH_SESSION_CLOSED': self._handle_ssh_session_closed,
             'APP_CRASH': self._handle_app_crash,
             'APP_UPDATE_FAILED': self._handle_app_update_failed,
             'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': self._handle_app_start_failed_local,
@@ -55,8 +69,54 @@ class EventProcessor:
         self.merge_window = 30  # 30秒合并窗口
         self.wakeup_timer = None
         self.spindown_timer = None
+
+        # SSH认证失败去重（避免pam_unix与Failed password重复推送）
+        self.ssh_auth_fail_cache = {}
+        self.ssh_auth_fail_window = 5  # 秒
+        self.ssh_auth_fail_cache_max = 10000
+        
+        # SSH事件合并（短窗口内合并相近事件）
+        self.ssh_merge_window = 5  # 秒
+        self.ssh_pending = {}
         
         self.logger.info("事件处理器初始化完成")
+
+    def _send_ssh_notification(self, event_type: str, event_data: Dict[str, Any], entry: JournalEntry):
+        """发送SSH相关通知并存储日志"""
+        raw_log = getattr(entry, 'raw_data', '{}')
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.notifier.send_notification(
+            event_type=event_type,
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+        self._store_notification_log(event_type, event_data, raw_log, entry)
+
+    def _schedule_ssh_event(self, key: str, event_type: str, event_data: Dict[str, Any],
+                            entry: JournalEntry, log_message: str):
+        """短窗口延迟发送SSH事件，等待合并"""
+        existing = self.ssh_pending.pop(key, None)
+        if existing:
+            existing.get('timer').cancel()
+
+        def _flush():
+            pending = self.ssh_pending.pop(key, None)
+            if not pending:
+                return
+            self.logger.info(pending['log_message'])
+            self._send_ssh_notification(pending['event_type'], pending['event_data'], pending['entry'])
+
+        timer = Timer(self.ssh_merge_window, _flush)
+        timer.daemon = True
+        self.ssh_pending[key] = {
+            'event_type': event_type,
+            'event_data': event_data,
+            'entry': entry,
+            'log_message': log_message,
+            'timer': timer
+        }
+        timer.start()
     
     def _store_notification_log(self, event_type: str, event_data: Dict[str, Any], 
                                raw_log: str, entry: JournalEntry, source: str = "journal"):
@@ -203,6 +263,221 @@ class EventProcessor:
             event_data=event_data,
             raw_log=raw_log,
             timestamp=timestamp
+        )
+
+    def _handle_ssh_service_started(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH服务启动事件"""
+        # 若近期有监听事件，优先合并为一条
+        pending_listen = self.ssh_pending.pop('ssh_listen_group', None)
+        if pending_listen:
+            pending_listen['timer'].cancel()
+            merged_data = dict(pending_listen['event_data'])
+            merged_data['service_started'] = True
+            self.logger.info("SSH服务启动(已合并监听)")
+            self._send_ssh_notification('SSH_LISTEN', merged_data, pending_listen['entry'])
+            return
+        self._schedule_ssh_event(
+            key='ssh_service_started',
+            event_type='SSH_SERVICE_STARTED',
+            event_data=event_data,
+            entry=entry,
+            log_message="SSH服务启动"
+        )
+
+    def _handle_ssh_listen(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH监听端口事件"""
+        pending_started = self.ssh_pending.pop('ssh_service_started', None)
+        if pending_started:
+            pending_started['timer'].cancel()
+            # 等待合并窗口，把所有监听合成一条再发
+            pending_listen = self.ssh_pending.pop('ssh_listen_group', None)
+            listens = []
+            if pending_listen:
+                pending_listen['timer'].cancel()
+                listens = list(pending_listen['event_data'].get('listens', []))
+            listens.append(event_data)
+            address = event_data.get('address', '')
+            port = event_data.get('port', '')
+            self._schedule_ssh_event(
+                key='ssh_listen_group',
+                event_type='SSH_LISTEN',
+                event_data={'listens': listens, 'service_started': True},
+                entry=entry,
+                log_message=f"SSH服务启动+监听合并(聚合): {address}:{port}"
+            )
+            return
+
+        # 合并多个监听事件为一条（IPv4/IPv6）
+        pending_listen = self.ssh_pending.pop('ssh_listen_group', None)
+        listens = []
+        if pending_listen:
+            pending_listen['timer'].cancel()
+            listens = list(pending_listen['event_data'].get('listens', []))
+        listens.append(event_data)
+        # 去重并过滤空监听
+        uniq_listens = []
+        seen = set()
+        for item in listens:
+            addr = item.get('address', '')
+            port = item.get('port', '')
+            if not addr or not port:
+                continue
+            key = f"{addr}:{port}"
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq_listens.append(item)
+        address = event_data.get('address', '')
+        port = event_data.get('port', '')
+        self._schedule_ssh_event(
+            key='ssh_listen_group',
+            event_type='SSH_LISTEN',
+            event_data={'listens': uniq_listens},
+            entry=entry,
+            log_message=f"SSH监听端口(合并): {address}:{port}"
+        )
+
+    def _handle_ssh_service_stopped(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH服务停止事件"""
+        # 短窗口合并 stop/deactivated 重复日志
+        self._schedule_ssh_event(
+            key='ssh_service_stopped',
+            event_type='SSH_SERVICE_STOPPED',
+            event_data=event_data,
+            entry=entry,
+            log_message="SSH服务停止"
+        )
+
+    def _handle_ssh_invalid_user(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH无效用户尝试事件"""
+        user = event_data.get('user', 'unknown')
+        ip = event_data.get('IP', 'unknown')
+        self.logger.warning(f"SSH无效用户尝试: {user}@{ip}")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.notifier.send_notification(
+            event_type='SSH_INVALID_USER',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+        self._store_notification_log('SSH_INVALID_USER', event_data, raw_log, entry)
+
+    def _handle_ssh_auth_failed(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH认证失败事件"""
+        user = event_data.get('user', 'unknown')
+        ip = event_data.get('IP', 'unknown')
+        # 基于IP+user做短窗口去重，避免同一次尝试多条日志重复推送
+        key = f"{ip or 'unknown'}|{user or 'unknown'}"
+        now = datetime.now().timestamp()
+        last_ts = self.ssh_auth_fail_cache.get(key)
+        if last_ts and (now - last_ts) < self.ssh_auth_fail_window:
+            self.logger.debug(f"SSH认证失败去重: {user}@{ip}")
+            return
+        self.ssh_auth_fail_cache[key] = now
+        # 清理过期缓存，控制规模
+        if len(self.ssh_auth_fail_cache) > self.ssh_auth_fail_cache_max:
+            cutoff = now - (self.ssh_auth_fail_window * 2)
+            self.ssh_auth_fail_cache = {
+                k: ts for k, ts in self.ssh_auth_fail_cache.items()
+                if ts >= cutoff
+            }
+
+        self.logger.warning(f"SSH认证失败: {user}@{ip}")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.notifier.send_notification(
+            event_type='SSH_AUTH_FAILED',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+        self._store_notification_log('SSH_AUTH_FAILED', event_data, raw_log, entry)
+
+    def _handle_ssh_login_success(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH登录成功事件"""
+        user = event_data.get('user', 'unknown')
+        ip = event_data.get('IP', 'unknown')
+        key_suffix = user
+        pending_open = self.ssh_pending.pop(f"ssh_session_opened:{key_suffix}", None)
+        if pending_open:
+            pending_open['timer'].cancel()
+            merged_data = dict(event_data)
+            merged_data['session_opened'] = True
+            self.logger.info(f"SSH登录成功(已合并会话开启): {user}@{ip}")
+            self._send_ssh_notification('SSH_LOGIN_SUCCESS', merged_data, entry)
+            return
+        self._schedule_ssh_event(
+            key=f"ssh_login_success:{key_suffix}",
+            event_type='SSH_LOGIN_SUCCESS',
+            event_data=event_data,
+            entry=entry,
+            log_message=f"SSH登录成功: {user}@{ip}"
+        )
+
+    def _handle_ssh_session_opened(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH会话开启事件"""
+        user = event_data.get('user', 'unknown')
+        key_suffix = user
+        pending_login = self.ssh_pending.pop(f"ssh_login_success:{key_suffix}", None)
+        if pending_login:
+            pending_login['timer'].cancel()
+            merged_data = dict(pending_login['event_data'])
+            merged_data['session_opened'] = True
+            login_user = merged_data.get('user', 'unknown')
+            login_ip = merged_data.get('IP', 'unknown')
+            self.logger.info(f"SSH登录成功(已合并会话开启): {login_user}@{login_ip}")
+            self._send_ssh_notification('SSH_LOGIN_SUCCESS', merged_data, pending_login['entry'])
+            return
+        self._schedule_ssh_event(
+            key=f"ssh_session_opened:{key_suffix}",
+            event_type='SSH_SESSION_OPENED',
+            event_data=event_data,
+            entry=entry,
+            log_message=f"SSH会话开启: {user}"
+        )
+
+    def _handle_ssh_disconnected(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH断开连接事件"""
+        user = event_data.get('user', 'unknown')
+        ip = event_data.get('IP', 'unknown')
+        key_suffix = user
+        pending_closed = self.ssh_pending.pop(f"ssh_session_closed:{key_suffix}", None)
+        if pending_closed:
+            pending_closed['timer'].cancel()
+            merged_data = dict(event_data)
+            merged_data['session_closed'] = True
+            self.logger.info(f"SSH断开连接(已合并会话关闭): {user}@{ip}")
+            self._send_ssh_notification('SSH_DISCONNECTED', merged_data, entry)
+            return
+        self._schedule_ssh_event(
+            key=f"ssh_disconnected:{key_suffix}",
+            event_type='SSH_DISCONNECTED',
+            event_data=event_data,
+            entry=entry,
+            log_message=f"SSH断开连接: {user}@{ip}"
+        )
+
+    def _handle_ssh_session_closed(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理SSH会话关闭事件"""
+        user = event_data.get('user', 'unknown')
+        key_suffix = user
+        pending_disconnected = self.ssh_pending.pop(f"ssh_disconnected:{key_suffix}", None)
+        if pending_disconnected:
+            pending_disconnected['timer'].cancel()
+            merged_data = dict(pending_disconnected['event_data'])
+            merged_data['session_closed'] = True
+            disc_user = merged_data.get('user', 'unknown')
+            disc_ip = merged_data.get('IP', 'unknown')
+            self.logger.info(f"SSH断开连接(已合并会话关闭): {disc_user}@{disc_ip}")
+            self._send_ssh_notification('SSH_DISCONNECTED', merged_data, pending_disconnected['entry'])
+            return
+        self._schedule_ssh_event(
+            key=f"ssh_session_closed:{key_suffix}",
+            event_type='SSH_SESSION_CLOSED',
+            event_data=event_data,
+            entry=entry,
+            log_message=f"SSH会话关闭: {user}"
         )
     
     def _handle_app_crash(self, event_data: Dict[str, Any], entry: JournalEntry):

@@ -1,4 +1,5 @@
 import os
+import glob
 import json
 import signal
 import time
@@ -7,22 +8,28 @@ import subprocess
 import threading
 import re
 import shutil
+import queue
+import hashlib
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Callable, Optional, List, Any
+from typing import Dict, Callable, Optional, List, Any, Tuple
 
 from .models import JournalEntry
 
 class JournalWatcher:
     """Journal日志监视器"""
     
-    def __init__(self, journal_paths: List[str] = None, cursor_dir: str = "/tmp/cursor"):
+    def __init__(self, journal_paths: List[str] = None, cursor_dir: str = "/tmp/cursor",
+                 eventlogger_log_path: Optional[str] = None, heartbeat_interval: int = 30):
         """
         初始化监视器
-        
+
         Args:
             journal_paths: Journal目录路径列表
             cursor_dir: 游标文件目录
+            eventlogger_log_path: eventlogger_service.log 路径
+            heartbeat_interval: 心跳检测间隔（秒）
         """
         self.journal_paths = journal_paths or [
             "/var/log/journal",
@@ -30,27 +37,40 @@ class JournalWatcher:
         ]
         self.cursor_dir = Path(cursor_dir)
         self.cursor_file = self.cursor_dir / "journal_cursor.txt"
-        
+        self.eventlogger_log_path = eventlogger_log_path
+
         # 事件处理器
         self.event_handlers: Dict[str, Callable] = {}
-        
+
         # 运行状态
         self.running = False
         self.process: Optional[subprocess.Popen] = None
-        self.log_mode: str = "unknown"  # syslog | journalctl | backup
+        self.stdout_thread: Optional[threading.Thread] = None
+        self.log_mode: str = "unknown"  # file | journalctl | backup
         self.syslog_paths_used: List[str] = []
-        
-        # 心跳监控
-        self.heartbeat_interval = 60  # 增加到60秒
+        self.line_queue = queue.Queue(maxsize=10000)
+        self.file_followers: Dict[str, threading.Thread] = {}
+        self.file_stop_event = threading.Event()
+        self.cursor_locks: Dict[str, threading.Lock] = {}
+        self.cursor_locks_lock = threading.Lock()
+        self.cursor_save_failures: Dict[str, int] = defaultdict(int)
+
+        # 心跳监控 - 使用配置的心跳间隔
+        self.heartbeat_interval = heartbeat_interval
         self.last_heartbeat = time.time()
         self.heartbeat_thread: Optional[threading.Thread] = None
+
+        # 日志源探测状态（用于判断是否有新日志）
+        self.last_log_check_time = time.time()
+        self.last_log_sizes: Dict[str, int] = {}  # 记录每个日志文件的大小
         
         # 统计信息
         self.stats = {
             'events_processed': 0,
             'entries_read': 0,
             'errors': 0,
-            'start_time': datetime.now()
+            'start_time': datetime.now(),
+            'dropped_lines': 0
         }
         
         # 设置日志
@@ -82,6 +102,7 @@ class JournalWatcher:
         # 设置信号处理
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+        self.file_stop_event.clear()
         
         try:
             # 启动日志监控进程（支持多种方式）
@@ -110,13 +131,15 @@ class JournalWatcher:
     
     def _start_log_process(self):
         """启动日志进程（支持多种日志来源）"""
-        # 检查系统支持的日志方式
-        # 优先检查syslog方式，因为其更广泛兼容
-        if self._check_syslog_available():
-            self.log_mode = "syslog"
-            self.logger.info("使用syslog方式监控日志")
-            self._start_syslog_process()
-        elif self._check_journalctl_available():
+        # 优先使用文件跟踪（syslog + eventlogger），两者逻辑保持一致
+        self.file_stop_event.clear()
+        if self._start_file_followers():
+            self.log_mode = "file"
+            self.logger.info("使用文件跟踪方式监控 syslog/eventlogger 日志")
+            return
+
+        # 无法跟踪文件时，退回到 journalctl
+        if self._check_journalctl_available():
             self.log_mode = "journalctl"
             self.logger.info("使用journalctl方式监控日志")
             self._start_journalctl_process()
@@ -129,10 +152,267 @@ class JournalWatcher:
         """检查journalctl是否可用"""
         return shutil.which('journalctl') is not None
     
-    def _check_syslog_available(self) -> bool:
-        """检查syslog文件是否存在"""
-        syslog_paths = ['/var/log/syslog', '/var/log/messages', '/var/log/auth.log']
-        return any(os.path.exists(path) for path in syslog_paths)
+    def _start_file_followers(self) -> bool:
+        """启动基于文件的日志跟踪"""
+        file_targets = [
+            '/var/log/syslog',
+            '/var/log/messages',
+            '/var/log/auth.log',
+            '/var/log/daemon.log',
+            '/var/log/kern.log',
+            '/var/log/user.log',
+            '/var/log/dmesg'
+        ]
+
+        if self.eventlogger_log_path:
+            file_targets.append(self.eventlogger_log_path)
+
+        # 去重并保持稳定顺序
+        seen = set()
+        unique_targets = []
+        for path in file_targets:
+            if not path:
+                continue
+            normalized = os.path.abspath(path)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            unique_targets.append(normalized)
+
+        if not unique_targets:
+            return False
+
+        started = False
+        for path in unique_targets:
+            if self._start_file_follower(path):
+                started = True
+
+        return started
+
+    def _start_file_follower(self, path: str) -> bool:
+        """为指定文件启动跟踪线程"""
+        if path in self.file_followers:
+            return True
+
+        thread = threading.Thread(
+            target=self._follow_file,
+            args=(path,),
+            name=f"FileFollower-{os.path.basename(path) or 'log'}",
+            daemon=True
+        )
+        thread.start()
+        self.file_followers[path] = thread
+        if path not in self.syslog_paths_used:
+            self.syslog_paths_used.append(path)
+
+        if os.path.exists(path):
+            self.logger.info(f"启动文件跟踪: {path}")
+            try:
+                self.last_log_sizes[path] = os.path.getsize(path)
+            except OSError:
+                self.last_log_sizes[path] = 0
+        else:
+            self.logger.info(f"启动文件跟踪: {path}（文件暂不存在，等待创建）")
+            self.last_log_sizes[path] = 0
+        return True
+
+    def _follow_file(self, path: str):
+        """持续读取文件新增内容"""
+        cursor_inode, cursor_offset, _ = self._read_file_cursor(path)
+        current_offset = cursor_offset or 0
+        current_inode = cursor_inode
+        skip_history = cursor_inode is None and cursor_offset == 0
+        lines_since_save = 0
+        last_save_time = time.time()
+        save_interval_lines = 100
+        save_interval_seconds = 5
+        old_file_path: Optional[str] = None
+        old_file_offset = 0
+        retry_delay = 2.0
+
+        while self.running and not self.file_stop_event.is_set():
+            try:
+                # 先读取轮转后的旧文件
+                if old_file_path and os.path.exists(old_file_path):
+                    self._drain_rotated_file(old_file_path, old_file_offset)
+                    old_file_path = None
+                    old_file_offset = 0
+                    current_offset = 0
+                    lines_since_save = 0
+                    last_save_time = time.time()
+
+                with open(path, 'r', encoding='utf-8', errors='replace') as logfile:
+                    inode = os.fstat(logfile.fileno()).st_ino
+                    mtime = os.path.getmtime(path)
+
+                    if current_inode and current_inode != inode:
+                        self.logger.info(f"检测到日志文件轮转: {path} (inode {current_inode} -> {inode})")
+                        old_file_path = self._locate_rotated_file(path, current_inode)
+                        if old_file_path:
+                            self.logger.info(f"将继续读取轮转文件剩余内容: {old_file_path}")
+                        else:
+                            self.logger.warning(f"未找到轮转文件，可能丢失部分日志: {path}")
+                        old_file_offset = current_offset
+                        current_inode = inode
+                        current_offset = 0
+                        self._save_file_cursor(path, current_inode, current_offset, mtime)
+                        lines_since_save = 0
+                        last_save_time = time.time()
+                        continue  # 先处理旧文件
+
+                    current_inode = inode
+                    if skip_history:
+                        logfile.seek(0, os.SEEK_END)
+                        current_offset = logfile.tell()
+                        self._save_file_cursor(path, current_inode, current_offset, mtime)
+                        skip_history = False
+                        lines_since_save = 0
+                        last_save_time = time.time()
+                    else:
+                        logfile.seek(current_offset)
+                    retry_delay = 2.0  # 成功打开后重置退避
+
+                    while self.running and not self.file_stop_event.is_set():
+                        line = logfile.readline()
+                        if not line:
+                            if lines_since_save > 0:
+                                self._save_file_cursor(path, current_inode, current_offset, mtime)
+                                lines_since_save = 0
+                                last_save_time = time.time()
+                            if self.file_stop_event.wait(0.5):
+                                return
+                            continue
+
+                        current_offset = logfile.tell()
+                        lines_since_save += 1
+                        now = time.time()
+                        if (lines_since_save >= save_interval_lines or
+                                now - last_save_time >= save_interval_seconds):
+                            self._save_file_cursor(path, current_inode, current_offset, mtime)
+                            lines_since_save = 0
+                            last_save_time = now
+
+                        self._publish_line(line)
+
+                if lines_since_save > 0:
+                    mtime = os.path.getmtime(path) if os.path.exists(path) else None
+                    self._save_file_cursor(path, current_inode, current_offset, mtime)
+                    lines_since_save = 0
+                    last_save_time = time.time()
+
+                if self.file_stop_event.wait(1.0):
+                    break
+            except FileNotFoundError:
+                if self.file_stop_event.wait(min(retry_delay, 60.0)):
+                    break
+                retry_delay = min(retry_delay * 1.5, 60.0)
+            except PermissionError:
+                self.logger.warning(f"无权限读取日志文件: {path}")
+                if self.file_stop_event.wait(5.0):
+                    break
+            except Exception as exc:
+                self.logger.error(f"读取日志文件 {path} 时出错: {exc}", exc_info=True)
+                if self.file_stop_event.wait(2.0):
+                    break
+
+    def _drain_rotated_file(self, old_path: str, start_offset: int):
+        """读取轮转文件剩余内容，避免数据丢失"""
+        try:
+            with open(old_path, 'r', encoding='utf-8', errors='replace') as old_file:
+                old_file.seek(start_offset)
+                for line in old_file:
+                    self._publish_line(line)
+            self.logger.info(f"轮转文件读取完成: {old_path}")
+        except Exception as exc:
+            self.logger.warning(f"读取轮转文件失败 {old_path}: {exc}")
+
+    def _locate_rotated_file(self, path: str, inode: int) -> Optional[str]:
+        """尝试根据inode定位轮转文件"""
+        directory = os.path.dirname(path)
+        basename = os.path.basename(path)
+        candidates = [
+            f"{path}.{i}" for i in range(1, 6)
+        ] + [
+            os.path.join(directory, f"{basename}.{datetime.now().strftime('%Y%m%d')}"),
+            os.path.join(directory, f"{basename}.{datetime.now().strftime('%Y%m%d-%H')}"),
+        ]
+        candidates.extend(glob.glob(f"{path}.*"))
+
+        for candidate in candidates:
+            try:
+                if not os.path.exists(candidate):
+                    continue
+                if os.stat(candidate).st_ino == inode:
+                    return candidate
+            except OSError:
+                continue
+        return None
+
+    def _file_cursor_path(self, path: str) -> Path:
+        """根据文件路径生成唯一的游标文件"""
+        safe_name = hashlib.md5(path.encode('utf-8')).hexdigest()
+        return self.cursor_dir / f"file_{safe_name}.cursor"
+
+    def _get_cursor_lock(self, path: str) -> threading.Lock:
+        with self.cursor_locks_lock:
+            if path not in self.cursor_locks:
+                self.cursor_locks[path] = threading.Lock()
+            return self.cursor_locks[path]
+
+    def _read_file_cursor(self, path: str) -> Tuple[Optional[int], int, Optional[float]]:
+        """读取文件游标信息"""
+        cursor_file = self._file_cursor_path(path)
+        if not cursor_file.exists():
+            return None, 0, None
+        lock = self._get_cursor_lock(path)
+        with lock:
+            try:
+                data = json.loads(cursor_file.read_text())
+                return data.get('inode'), data.get('offset', 0), data.get('mtime')
+            except Exception:
+                return None, 0, None
+
+    def _save_file_cursor(self, path: str, inode: Optional[int], offset: int, mtime: Optional[float]):
+        """保存文件游标"""
+        if inode is None:
+            return
+        cursor_file = self._file_cursor_path(path)
+        lock = self._get_cursor_lock(path)
+        payload = json.dumps({'inode': inode, 'offset': offset, 'mtime': mtime})
+        with lock:
+            temp_file = cursor_file.with_suffix(cursor_file.suffix + '.tmp')
+            try:
+                temp_file.write_text(payload)
+                temp_file.replace(cursor_file)
+                if path in self.cursor_save_failures:
+                    del self.cursor_save_failures[path]
+            except Exception as exc:
+                temp_file.unlink(missing_ok=True)
+                self.cursor_save_failures[path] = self.cursor_save_failures.get(path, 0) + 1
+                failure_count = self.cursor_save_failures[path]
+                if failure_count == 1:
+                    self.logger.warning(f"保存游标失败 {cursor_file}: {exc}")
+                elif failure_count % 10 == 0:
+                    self.logger.error(f"保存游标连续失败 {failure_count} 次: {cursor_file}")
+
+    def _ensure_file_followers_alive(self):
+        """确保文件跟踪线程保持运行"""
+        if not self.file_followers:
+            return
+        for path, thread in list(self.file_followers.items()):
+            if thread.is_alive():
+                continue
+            self.logger.warning(f"文件跟踪线程已停止: {path}，准备重启")
+            del self.file_followers[path]
+            self._start_file_follower(path)
+
+    def _stop_file_followers(self):
+        """停止所有文件跟踪线程"""
+        self.file_stop_event.set()
+        for path, thread in list(self.file_followers.items()):
+            if thread.is_alive():
+                thread.join(timeout=2)
+        self.file_followers.clear()
     
     def _start_journalctl_process(self):
         """启动journalctl进程"""
@@ -184,48 +464,43 @@ class JournalWatcher:
         
         if self.process and hasattr(self.process, 'pid'):
             self.logger.info(f"Journal进程启动，PID: {self.process.pid}")
+            self._start_process_reader(self.process)
     
-    def _start_syslog_process(self):
-        """启动syslog监控进程"""
-        # 寻找可用的syslog文件
-        syslog_paths = [
-            '/var/log/syslog',      # Debian/Ubuntu 系统主要日志
-            '/var/log/messages',    # RedHat/CentOS 系统主要日志
-            '/var/log/auth.log',    # 认证相关日志
-            '/var/log/daemon.log',  # 守护进程日志
-            '/var/log/kern.log',    # 内核日志
-            '/var/log/user.log',    # 用户级日志
-            '/var/log/dmesg'        # 内核环形缓冲区日志
-        ]
-        available_paths = [path for path in syslog_paths if os.path.exists(path)]
-        
-        if not available_paths:
-            self.logger.error("未找到可用的syslog文件，使用备用进程")
-            self._start_backup_process()
+    def _start_process_reader(self, proc: subprocess.Popen):
+        """启动stdout/stderr读取线程"""
+        if not proc:
             return
-        self.syslog_paths_used = available_paths[:]
-        
-        # 使用tail -F监控最新的syslog文件（支持日志轮转）
-        cmd = ['tail', '-n', '0', '-F'] + available_paths
-        
-        self.logger.info(f"执行syslog命令: {' '.join(cmd)}")
-        
-        try:
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-                preexec_fn=os.setsid
+
+        if proc.stdout:
+            self.stdout_thread = threading.Thread(
+                target=self._read_process_stdout,
+                args=(proc,),
+                name=f"JournalStdout-{proc.pid}",
+                daemon=True
             )
-        except Exception as e:
-            self.logger.error(f"启动syslog监控进程失败: {e}，使用备用进程维持运行")
-            self._start_backup_process()
-        
-        if self.process and hasattr(self.process, 'pid'):
-            self.logger.info(f"Syslog进程启动，PID: {self.process.pid}")
+            self.stdout_thread.start()
+
+        if proc.stderr:
+            threading.Thread(
+                target=self._consume_stderr,
+                args=(proc,),
+                name=f"JournalStderr-{proc.pid}",
+                daemon=True
+            ).start()
+    
+    def _read_process_stdout(self, proc: subprocess.Popen):
+        """持续读取journalctl输出"""
+        try:
+            while self.running and proc and proc.stdout:
+                line = proc.stdout.readline()
+                if not line:
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                    continue
+                self._publish_line(line)
+        except Exception as exc:
+            self.logger.error(f"读取journalctl输出失败: {exc}")
     
     def _start_backup_process(self):
         """启动备用进程保持运行"""
@@ -277,51 +552,47 @@ class JournalWatcher:
         return cmd
     
     def _process_output(self):
-        """处理日志输出"""
-        current_pid = None
-
+        """处理日志输出（统一从队列消费）"""
         while self.running:
-            proc = self.process
-            if not proc or not proc.stdout:
-                self.logger.warning("没有有效的输出流，使用备用处理方式")
-                time.sleep(1)
+            try:
+                line = self.line_queue.get(timeout=0.5)
+            except queue.Empty:
                 continue
 
-            # 若进程退出，等待心跳线程重启
-            if proc.poll() is not None:
-                time.sleep(1)
+            if not line:
                 continue
-
-            # 启动 stderr 读取线程（避免缓冲区阻塞）
-            if proc.stderr and proc.pid != current_pid:
-                current_pid = proc.pid
-                threading.Thread(
-                    target=self._consume_stderr,
-                    name=f"JournalStderrReader-{current_pid}",
-                    daemon=True
-                ).start()
 
             try:
-                line = proc.stdout.readline()
-                if not line:
-                    time.sleep(0.1)
-                    continue
-
-                line = line.strip()
-                if line:
-                    self._process_line(line)
-                    self.stats['entries_read'] += 1
-            except Exception as e:
-                self.logger.error(f"处理输出时出错: {e}")
+                self._process_line(line)
+                self.stats['entries_read'] += 1
+            except Exception as exc:
+                self.logger.error(f"处理输出时出错: {exc}")
                 self.stats['errors'] += 1
-                time.sleep(1)
 
-    def _consume_stderr(self):
+    def _publish_line(self, line: str):
+        """将新日志行送入统一处理队列"""
+        if not line:
+            return
+
+        clean_line = line.strip('\r\n')
+        if not clean_line:
+            return
+
+        try:
+            self.line_queue.put(clean_line, timeout=1)
+            self.last_heartbeat = time.time()
+        except queue.Full:
+            self.stats['dropped_lines'] += 1
+            self.logger.warning("日志处理队列已满，丢弃一条日志")
+
+    def _consume_stderr(self, proc: subprocess.Popen):
         """消费子进程stderr，避免阻塞"""
         try:
-            while self.running and self.process and self.process.stderr:
-                line = self.process.stderr.readline()
+            while self.running and proc and proc.stderr:
+                line = proc.stderr.readline()
                 if not line:
+                    if proc.poll() is not None:
+                        break
                     time.sleep(0.1)
                     continue
                 msg = line.strip()
@@ -367,6 +638,307 @@ class JournalWatcher:
         if 'ShouldRestart failed' in line or 'container will not be restarted' in line:
             # 这些是Docker容器停止的正常日志，不需要处理
             return
+
+        # SSH相关事件解析（优先处理，避免落入通用登录/登出）
+        # 1) ssh服务启动
+        if re.search(r'started\s+ssh\.service', line, re.IGNORECASE):
+            handler = self.event_handlers.get('SSH_SERVICE_STARTED')
+            if handler:
+                event_data = {
+                    'service': 'ssh',
+                    'message': line,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH服务启动事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        # 1.1) ssh服务停止
+        if re.search(r'ssh\.service:\s+deactivated successfully', line, re.IGNORECASE) or \
+           re.search(r'stopped\s+ssh\.service', line, re.IGNORECASE):
+            handler = self.event_handlers.get('SSH_SERVICE_STOPPED')
+            if handler:
+                event_data = {
+                    'service': 'ssh',
+                    'message': line,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH服务停止事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        # 2) ssh监听端口
+        listen_match = re.search(r'Server listening on (.+?) port (\d+)\.', line, re.IGNORECASE)
+        if listen_match:
+            handler = self.event_handlers.get('SSH_LISTEN')
+            if handler:
+                event_data = {
+                    'address': listen_match.group(1),
+                    'port': listen_match.group(2),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH监听端口事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        # 3) 无效用户登录尝试
+        invalid_user_match = re.search(r'Invalid user (\S+) from (\S+) port (\d+)', line, re.IGNORECASE)
+        if invalid_user_match:
+            handler = self.event_handlers.get('SSH_INVALID_USER')
+            if handler:
+                event_data = {
+                    'user': invalid_user_match.group(1),
+                    'IP': invalid_user_match.group(2),
+                    'port': invalid_user_match.group(3),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH无效用户事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        # 4) 认证失败（pam_unix 或 Failed password）
+        if re.search(r'pam_unix\(sshd:auth\): authentication failure', line, re.IGNORECASE):
+            handler = self.event_handlers.get('SSH_AUTH_FAILED')
+            if handler:
+                rhost_match = re.search(r'rhost=([0-9a-fA-F\.:]+)', line)
+                user_match = re.search(r'user=([^\s]+)', line, re.IGNORECASE)
+                event_data = {
+                    'reason': 'pam_auth_failure',
+                    'user': user_match.group(1) if user_match else 'unknown',
+                    'IP': rhost_match.group(1) if rhost_match else 'unknown',
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH认证失败事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        failed_password_match = re.search(
+            r'Failed password for (?:invalid user )?(\S+) from (\S+) port (\d+)',
+            line,
+            re.IGNORECASE
+        )
+        if failed_password_match:
+            handler = self.event_handlers.get('SSH_AUTH_FAILED')
+            if handler:
+                event_data = {
+                    'reason': 'failed_password',
+                    'user': failed_password_match.group(1),
+                    'IP': failed_password_match.group(2),
+                    'port': failed_password_match.group(3),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH密码失败事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        # 5) 登录成功
+        accepted_match = re.search(r'Accepted password for (\S+) from (\S+) port (\d+)', line, re.IGNORECASE)
+        if accepted_match:
+            handler = self.event_handlers.get('SSH_LOGIN_SUCCESS')
+            if handler:
+                event_data = {
+                    'user': accepted_match.group(1),
+                    'IP': accepted_match.group(2),
+                    'port': accepted_match.group(3),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH登录成功事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        # 6) 会话开始
+        session_open_match = re.search(r'session opened for user (\S+)', line, re.IGNORECASE)
+        if session_open_match:
+            handler = self.event_handlers.get('SSH_SESSION_OPENED')
+            if handler:
+                user = session_open_match.group(1)
+                # 规范化用户名（去除 uid 信息）
+                user = re.sub(r'\(uid=\d+\)$', '', user).strip()
+                event_data = {
+                    'user': user,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH会话开启事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        # 7) 断开连接
+        disconnect_match = re.search(r'Disconnected from user (\S+) (\S+) port (\d+)', line, re.IGNORECASE)
+        if disconnect_match:
+            handler = self.event_handlers.get('SSH_DISCONNECTED')
+            if handler:
+                event_data = {
+                    'user': disconnect_match.group(1),
+                    'IP': disconnect_match.group(2),
+                    'port': disconnect_match.group(3),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH断开连接事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
+
+        # 8) 会话关闭
+        session_close_match = re.search(r'session closed for user (\S+)', line, re.IGNORECASE)
+        if session_close_match:
+            handler = self.event_handlers.get('SSH_SESSION_CLOSED')
+            if handler:
+                event_data = {
+                    'user': session_close_match.group(1),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                try:
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='unknown',
+                        syslog_identifier='generic',
+                        message=line,
+                        priority=6,
+                        pid=0,
+                        raw_data=json.dumps({'message': line}, ensure_ascii=False),
+                        original_line=line
+                    )
+                    handler(event_data, virtual_entry)
+                    self.stats['events_processed'] += 1
+                except Exception as e:
+                    self.logger.error(f"处理SSH会话关闭事件失败: {e}")
+                    self.stats['errors'] += 1
+                return
         
         # 检查是否为飞牛NAS的MAINEVENT或TRIMEVENT格式
         if self._parse_funan_events(line):
@@ -1006,29 +1578,47 @@ class JournalWatcher:
     
     def _heartbeat_monitor(self):
         """心跳监控线程"""
-        self.logger.info("心跳监控线程启动")
-        
+        self.logger.info(f"心跳监控线程启动（间隔: {self.heartbeat_interval}秒）")
+
         while self.running:
             time.sleep(self.heartbeat_interval)
-            
-            # 检查心跳
-            if time.time() - self.last_heartbeat > self.heartbeat_interval * 2:
-                self.logger.warning("心跳超时，可能日志进程异常")
-                # 先尝试读取日志源进行探测（不推送），确认是否还能读取
-                if self._probe_log_source():
-                    self.logger.info("日志探测成功，更新心跳时间")
+
+            idle_duration = time.time() - self.last_heartbeat
+            threshold = self.heartbeat_interval * (3 if self.log_mode == "file" else 2)
+
+            if idle_duration > threshold:
+                if self.log_mode == "file":
+                    self.logger.debug("心跳空闲，检查文件跟踪线程状态")
+                    self._ensure_file_followers_alive()
                     self.last_heartbeat = time.time()
                     continue
 
-                # 探测失败才重启，避免误杀
-                self.logger.error("日志探测失败，尝试重启日志进程...")
+                self.logger.warning(f"心跳超时（超过 {self.heartbeat_interval * 2} 秒未读到日志）")
+
+                # 首先检查进程是否存活
+                if self.process is None or self.process.poll() is not None:
+                    self.logger.error("日志进程已退出或不存在，立即重启")
+                    try:
+                        self._restart_log_process()
+                        self.last_heartbeat = time.time()
+                    except Exception as e:
+                        self.logger.error(f"重启失败: {e}")
+                    continue
+
+                # 进程存活但无输出，探测是否有新日志
+                if self._probe_log_source_for_new_content():
+                    self.logger.info("探测到新日志内容，更新心跳时间")
+                    self.last_heartbeat = time.time()
+                    continue
+
+                # 探测失败，进程可能卡死，重启日志进程
+                self.logger.error("日志探测失败（无新内容），进程可能卡死，重启日志进程")
                 try:
                     self._restart_log_process()
-                    # 重启后更新时间戳，避免重复触发
                     self.last_heartbeat = time.time()
                 except Exception as e:
                     self.logger.error(f"重启失败: {e}")
-            
+
             # 定期输出统计信息（每小时）
             if self.stats['entries_read'] % 3600 == 0 and self.stats['entries_read'] > 0:
                 self.logger.info(f"运行统计: {self.get_stats()}")
@@ -1036,7 +1626,20 @@ class JournalWatcher:
     def _restart_log_process(self):
         """重启日志进程"""
         self.logger.info("准备重启日志进程")
-        
+
+        if self.log_mode == "file":
+            # 重启文件跟踪线程
+            self._stop_file_followers()
+            self.file_stop_event.clear()
+            started = self._start_file_followers()
+            if started:
+                self.logger.info("文件跟踪线程已重启")
+            else:
+                self.logger.warning("无法重启文件跟踪线程，尝试切换到journalctl")
+                self._start_log_process()
+            self.last_heartbeat = time.time()
+            return
+
         if self.process:
             try:
                 self.logger.info(f"当前进程PID: {getattr(self.process, 'pid', 'Unknown')}")
@@ -1047,9 +1650,7 @@ class JournalWatcher:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                     self.process.wait(timeout=5)
             except ProcessLookupError:
-                # 进程已经不存在
                 self.logger.info("进程已经不存在")
-                pass
             except Exception as e:
                 self.logger.warning(f"优雅终止失败: {e}")
                 try:
@@ -1064,37 +1665,52 @@ class JournalWatcher:
         self._start_log_process()
         self.logger.info("日志进程已重启")
 
-    def _probe_log_source(self) -> bool:
-        """探测日志源是否可读（不推送）"""
+    def _probe_log_source_for_new_content(self) -> bool:
+        """探测日志源是否有新内容（不是仅检查有内容）"""
         try:
-            if self.log_mode == "syslog" and self.syslog_paths_used:
+            if self.log_mode == "file" and self.syslog_paths_used:
+                has_new_content = False
                 for path in self.syslog_paths_used:
                     try:
-                        with open(path, 'r', errors='ignore') as f:
-                            # 读取最后一行（快速探测）
-                            f.seek(0, os.SEEK_END)
-                            if f.tell() == 0:
-                                continue
-                            # 回退一小段读取尾部
-                            offset = min(f.tell(), 4096)
-                            f.seek(-offset, os.SEEK_END)
-                            tail = f.read()
-                            if tail.strip():
-                                return True
-                    except Exception:
+                        if not os.path.exists(path):
+                            continue
+
+                        current_size = os.path.getsize(path)
+                        last_size = self.last_log_sizes.get(path, 0)
+
+                        if current_size > last_size:
+                            self.logger.info(f"检测到 {path} 有新内容（{last_size} -> {current_size} 字节）")
+                            has_new_content = True
+                        elif current_size < last_size:
+                            self.logger.info(f"检测到 {path} 文件轮转（{last_size} -> {current_size} 字节）")
+                            has_new_content = True
+
+                        self.last_log_sizes[path] = current_size
+                    except Exception as e:
+                        self.logger.debug(f"探测 {path} 时出错: {e}")
                         continue
-                return False
+                return has_new_content
+
             if self.log_mode == "journalctl":
-                # 使用journalctl读取一条日志进行探测
+                # 使用 journalctl --since 检查是否有新日志
+                since_time = datetime.fromtimestamp(self.last_log_check_time).strftime('%Y-%m-%d %H:%M:%S')
                 result = subprocess.run(
-                    ['journalctl', '-n', '1', '--no-pager'],
+                    ['journalctl', '--since', since_time, '-n', '1', '--no-pager'],
                     capture_output=True,
                     text=True,
                     timeout=5
                 )
-                return result.returncode == 0 and bool(result.stdout.strip())
+                self.last_log_check_time = time.time()
+
+                # 如果有输出且不为空，说明有新日志
+                has_new = result.returncode == 0 and bool(result.stdout.strip())
+                if has_new:
+                    self.logger.info("journalctl 探测到新日志")
+                return has_new
+
             return False
-        except Exception:
+        except Exception as e:
+            self.logger.error(f"探测日志源时出错: {e}")
             return False
     
     def _read_cursor(self) -> Optional[str]:
@@ -1130,6 +1746,9 @@ class JournalWatcher:
         
         self.running = False
         self.logger.info("停止Journal监视器")
+
+        # 停止文件跟踪
+        self._stop_file_followers()
         
         # 终止进程
         if self.process:
@@ -1141,14 +1760,19 @@ class JournalWatcher:
                 try:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
                     self.logger.warning("强制终止日志进程")
-                except:
-                    pass
+                except ProcessLookupError:
+                    self.logger.debug("进程已不存在，无需强制终止")
+                except Exception as e:
+                    self.logger.error(f"强制终止进程失败: {e}")
             except Exception as e:
                 self.logger.error(f"停止进程失败: {e}")
         
         # 等待心跳线程
         if self.heartbeat_thread and self.heartbeat_thread.is_alive():
             self.heartbeat_thread.join(timeout=5)
+
+        if self.stdout_thread and self.stdout_thread.is_alive():
+            self.stdout_thread.join(timeout=5)
         
         self.logger.info("Journal监视器已停止")
     
@@ -1162,7 +1786,10 @@ class JournalWatcher:
             'runtime_seconds': runtime,
             'runtime_human': str(current_time - self.stats['start_time']),
             'event_handlers': len(self.event_handlers),
-            'is_running': self.running
+            'is_running': self.running,
+            'queue_size': self.line_queue.qsize(),
+            'active_file_followers': len([t for t in self.file_followers.values() if t.is_alive()]),
+            'cursor_save_failures': sum(self.cursor_save_failures.values())
         }
     
     def is_running(self) -> bool:

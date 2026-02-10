@@ -19,7 +19,16 @@
     "UPS_ONBATT_LOWBATT", 
     "UPS_ONLINE",
     "DiskWakeup", 
-    "DiskSpindown"
+    "DiskSpindown",
+    "SSH_SERVICE_STARTED",
+    "SSH_SERVICE_STOPPED",
+    "SSH_LISTEN",
+    "SSH_INVALID_USER",
+    "SSH_AUTH_FAILED",
+    "SSH_LOGIN_SUCCESS",
+    "SSH_SESSION_OPENED",
+    "SSH_DISCONNECTED",
+    "SSH_SESSION_CLOSED"
   ],
   "log_level": "INFO",
   "log_dir": "./data/logs",
@@ -32,7 +41,7 @@
     "/run/log/journal"
   ],
   "cursor_dir": "./data/cursor",
-  "heartbeat_interval": 30,
-  "file_check_interval": 60,
+  "heartbeat_interval": 180,
+  "file_check_interval": 240,
   "max_log_age": 7
 }

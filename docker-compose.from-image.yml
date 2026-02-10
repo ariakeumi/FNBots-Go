@@ -13,6 +13,7 @@ services:
       - /run/log/journal:/run/log/journal:ro
       # 文本日志（可选）
       - /var/log/syslog:/var/log/syslog:ro
+      - /usr/trim/logs/eventlogger_service.log:/usr/trim/logs/eventlogger_service.log:ro
       # 应用数据目录
       - ./data/logs:/app/logs:rw
       - ./data/cursor:/tmp/cursor:rw
@@ -30,7 +31,7 @@ services:
       # Bark推送URL (可选)
       - BARK_URL=${BARK_URL}
       # 监控事件配置（可选，默认包含所有事件）
-      - MONITOR_EVENTS=LoginSucc,LoginSucc2FA1,LoginFail,Logout,FoundDisk,APP_CRASH,APP_UPDATE_FAILED,UPS_ONBATT_LOWBATT,UPS_ONLINE,DiskWakeup,DiskSpindown
+      - MONITOR_EVENTS=LoginSucc,LoginSucc2FA1,LoginFail,Logout,FoundDisk,APP_CRASH,APP_UPDATE_FAILED,UPS_ONBATT_LOWBATT,UPS_ONLINE,DiskWakeup,DiskSpindown,SSH_SERVICE_STARTED,SSH_SERVICE_STOPPED,SSH_LISTEN,SSH_INVALID_USER,SSH_AUTH_FAILED,SSH_LOGIN_SUCCESS,SSH_SESSION_OPENED,SSH_DISCONNECTED,SSH_SESSION_CLOSED
       - TZ=Asia/Shanghai
 
     cap_add:

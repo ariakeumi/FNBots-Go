@@ -24,6 +24,7 @@ class Application:
         self.notifier = None
         self.event_processor = None
         self.journal_watcher = None
+        self.logger = None
         self.running = False
 
         
@@ -47,7 +48,7 @@ class Application:
             print(f"配置加载完成: {self.config.wechat_webhook_url[:50]}...")
             
             # 设置日志
-            setup_logging(self.config)
+            self.logger = setup_logging(self.config)
             print("日志设置完成")
             
             # 打印横幅
@@ -84,9 +85,11 @@ class Application:
             print("正在初始化日志监视器...")
             self.journal_watcher = JournalWatcher(
                 journal_paths=self.config.journal_paths,
-                cursor_dir=self.config.cursor_dir
+                cursor_dir=self.config.cursor_dir,
+                eventlogger_log_path=self.config.eventlogger_log_path,
+                heartbeat_interval=self.config.heartbeat_interval
             )
-            print("日志监视器初始化完成")
+            print(f"日志监视器初始化完成（心跳间隔: {self.config.heartbeat_interval}秒）")
             
             # 注册事件处理器
             print("开始注册事件处理器...")
@@ -155,8 +158,8 @@ class Application:
     
     def shutdown(self):
         """关闭应用"""
-        print("\\n正在关闭应用...")
-        
+        print("\n正在关闭应用...")
+
         # 发送停止通知
         if self.notifier:
             self.notifier.send_system_notification(
@@ -164,25 +167,35 @@ class Application:
                 '飞牛NAS日志监控系统已停止，监控服务暂停',
                 {'hostname': socket.gethostname(), 'version': '1.0'}
             )
-        
+
         # 停止监视器
         if self.journal_watcher:
             self.journal_watcher.stop()
-        
+
+        # 停止运行日志清理线程
+        if self.logger and hasattr(self.logger, 'cleanup_stop_flag'):
+            print("正在停止运行日志清理线程...")
+            self.logger.cleanup_stop_flag.set()
+
+        # 停止原始推送日志清理线程
+        if self.event_processor and hasattr(self.event_processor, 'log_storage'):
+            print("正在停止原始推送日志清理线程...")
+            self.event_processor.log_storage.stop_cleanup_thread()
+
         # 关闭通知器
         if self.notifier:
             stats = self.notifier.get_stats()
-            print("\\n运行统计:")
+            print("\n运行统计:")
             print(f"  发送请求: {stats.get('request_count', 0)}")
             print(f"  成功通知: {stats.get('success_count', 0)}")
             print(f"  失败通知: {stats.get('error_count', 0)}")
-            
+
             # success_rate 在连接池中已经是格式化的字符串（例如 "0.0%"）
             success_rate = stats.get('success_rate', '0.0%')
             print(f"  成功率: {success_rate}")
-            
+
             self.notifier.close()
-        
+
         print(f"应用已关闭 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 

@@ -28,6 +28,7 @@
   - 磁盘唤醒 (DiskWakeup)
   - 磁盘休眠 (DiskSpindown)
 - 🗃️ **日志存储分析**：自动存储触发通知的原始系统日志，支持后续问题分析和审计
+- 🩺 **稳定心跳监控**：syslog 与 eventlogger 采用统一游标式文件跟踪，长时间空闲也不会误判重启
 
 ## 新增功能：日志存储与分析
 
@@ -84,17 +85,21 @@ python tools/log_manager.py cleanup 30
 ```
 
 ### 配置选项
-在配置文件中可以设置日志存储目录：
+在配置文件中可以设置日志存储目录和保留天数：
 ```
 {
-  "log_storage_dir": "./stored_logs"
+  "log_storage_dir": "./stored_logs",
+  "log_retention_days": 30
 }
 ```
 
 或通过环境变量：
 ```bash
 export LOG_STORAGE_DIR="/path/to/storage"
+export LOG_RETENTION_DAYS=30
 ```
+
+**自动清理**：系统会在启动时自动清理超过保留天数的旧日志文件，并每24小时执行一次定期清理
 
 ## 使用方法
 
@@ -130,6 +135,7 @@ docker-compose logs -f
 # 停止服务
 docker-compose down
 ```
+> ⚠️ **数据持久化说明**：监控游标和原始日志默认写入 `./data` 目录，请在 Docker/Compose 中将该目录挂载到宿主机持久化存储（例如 `./data:/app/data`），避免容器重启后重复消费日志。
 
 ## 通知示例
 

@@ -4,7 +4,7 @@
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any
 from dataclasses import dataclass
 
 from .multi_platform_notifier import MultiPlatformNotifier

@@ -24,12 +24,15 @@ class Config:
         "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
         "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
         "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
-        "DiskWakeup", "DiskSpindown"
+        "DiskWakeup", "DiskSpindown",
+        "SSH_SERVICE_STARTED", "SSH_SERVICE_STOPPED", "SSH_LISTEN", "SSH_INVALID_USER", "SSH_AUTH_FAILED",
+        "SSH_LOGIN_SUCCESS", "SSH_SESSION_OPENED", "SSH_DISCONNECTED", "SSH_SESSION_CLOSED"
     ])
     
     # 日志配置
     log_level: str = "INFO"
     log_dir: str = "./data/logs"
+    log_retention_days: int = 30  # 原始推送日志保留天数
     
     # 连接池配置
     http_pool_size: int = 10
@@ -44,44 +47,48 @@ class Config:
         "/run/log/journal"
     ])
     cursor_dir: str = "./data/cursor"  # 统一使用data目录下的cursor
+    eventlogger_log_path: str = "/usr/trim/logs/eventlogger_service.log"
     
     # 高级配置
-    heartbeat_interval: int = 30
-    file_check_interval: int = 60
+    heartbeat_interval: int = 180  #3分钟
+    file_check_interval: int = 240 #4分钟
     max_log_age: int = 7
     
 
     
     def __post_init__(self):
         """初始化后处理"""
+        # 记录哪些配置项是从环境变量设置的
+        self._env_set_keys = set()
         # 首先从环境变量加载配置
         self._load_from_env()
-        # 然后从配置文件加载，但仅当配置项未设置时才覆盖
+        # 然后从配置文件加载，但仅当配置项未从环境变量设置时才覆盖
         self._load_from_file_skip_if_set()
         self._validate()
         self._ensure_directories()
     
     def _load_from_file_skip_if_set(self):
-        """从配置文件加载（可选），但跳过已设置的配置项"""
+        """从配置文件加载（可选），但跳过已从环境变量设置的配置项"""
         config_file = Path('/app/config/config.json')
         if config_file.exists():
             try:
                 with open(config_file, 'r') as f:
                     data = json.load(f)
-                
-                # 覆盖配置 - 仅当当前值为空或默认值时才设置
+
+                # 覆盖配置 - 仅当配置项未从环境变量设置时才使用配置文件的值
                 for key, value in data.items():
                     if hasattr(self, key):
-                        current_value = getattr(self, key)
-                        # 如果当前值是默认值（空字符串）或者是一个占位符，则用配置文件中的值替换
-                        if not current_value or (isinstance(value, str) and value.startswith('${') and value.endswith('}')):
-                            # 如果值是字符串且包含环境变量占位符，则进行替换
-                            if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
-                                env_var_name = value[2:-1]  # 提取变量名
-                                env_value = os.getenv(env_var_name, '')  # 获取环境变量值，不存在则为空字符串
-                                setattr(self, key, env_value)
-                            else:
-                                setattr(self, key, value)
+                        # 如果这个配置项已经从环境变量设置过，跳过
+                        if key in self._env_set_keys:
+                            continue
+
+                        # 如果值是字符串且包含环境变量占位符，则进行替换
+                        if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                            env_var_name = value[2:-1]  # 提取变量名
+                            env_value = os.getenv(env_var_name, '')  # 获取环境变量值，不存在则为空字符串
+                            setattr(self, key, env_value)
+                        else:
+                            setattr(self, key, value)
             except Exception as e:
                 print(f"警告: 配置文件读取失败 - {e}")
     
@@ -89,53 +96,72 @@ class Config:
         """从环境变量加载配置"""
         # 端口配置（保留此行以兼容旧版本，但不实际使用）
         # port = os.getenv('PORT')  # 未使用，保留会造成误导
-        
+
         # Webhook URLs
         if wechat_webhook := os.getenv('WECHAT_WEBHOOK_URL'):
             self.wechat_webhook_url = wechat_webhook
+            self._env_set_keys.add('wechat_webhook_url')
         elif webhook := os.getenv('WEBHOOK_URL'):  # 兼容旧的环境变量名
             self.wechat_webhook_url = webhook
-        
+            self._env_set_keys.add('wechat_webhook_url')
+
         if dingtalk_webhook := os.getenv('DINGTALK_WEBHOOK_URL'):
             self.dingtalk_webhook_url = dingtalk_webhook
-        
+            self._env_set_keys.add('dingtalk_webhook_url')
+
         if feishu_webhook := os.getenv('FEISHU_WEBHOOK_URL'):
             self.feishu_webhook_url = feishu_webhook
-        
+            self._env_set_keys.add('feishu_webhook_url')
+
         if bark_url := os.getenv('BARK_URL'):
             self.bark_url = bark_url
-        
+            self._env_set_keys.add('bark_url')
+
         # 监控事件
         if events := os.getenv('MONITOR_EVENTS'):
             self.monitor_events = [e.strip() for e in events.split(',')]
-        
+            self._env_set_keys.add('monitor_events')
+
         # 日志级别
         if log_level := os.getenv('LOG_LEVEL'):
             self.log_level = log_level.upper()
-        
-        
+            self._env_set_keys.add('log_level')
+
+
         # HTTP配置
         if pool_size := os.getenv('HTTP_POOL_SIZE'):
             self.http_pool_size = int(pool_size)
-        
+            self._env_set_keys.add('http_pool_size')
+
         if retry_count := os.getenv('HTTP_RETRY_COUNT'):
             self.http_retry_count = int(retry_count)
-        
+            self._env_set_keys.add('http_retry_count')
+
         if timeout := os.getenv('HTTP_TIMEOUT'):
             self.http_timeout = int(timeout)
-        
+            self._env_set_keys.add('http_timeout')
+
         if dedup_window := os.getenv('DEDUP_WINDOW'):
             self.dedup_window = int(dedup_window)
-        
+            self._env_set_keys.add('dedup_window')
+
         # 高级配置
         if heartbeat := os.getenv('HEARTBEAT_INTERVAL'):
             self.heartbeat_interval = int(heartbeat)
-        
+            self._env_set_keys.add('heartbeat_interval')
+
         if file_check := os.getenv('FILE_CHECK_INTERVAL'):
             self.file_check_interval = int(file_check)
-        
+            self._env_set_keys.add('file_check_interval')
+
         if max_age := os.getenv('MAX_LOG_AGE'):
             self.max_log_age = int(max_age)
+            self._env_set_keys.add('max_log_age')
+
+        if log_retention := os.getenv('LOG_RETENTION_DAYS'):
+            self.log_retention_days = int(log_retention)
+            self._env_set_keys.add('log_retention_days')
+
     
     def _validate(self):
         """验证配置"""
@@ -163,7 +189,9 @@ class Config:
                         "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
                         "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
                         "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
-                        "DiskWakeup", "DiskSpindown"}
+                        "DiskWakeup", "DiskSpindown",
+                        "SSH_SERVICE_STARTED", "SSH_SERVICE_STOPPED", "SSH_LISTEN", "SSH_INVALID_USER", "SSH_AUTH_FAILED",
+                        "SSH_LOGIN_SUCCESS", "SSH_SESSION_OPENED", "SSH_DISCONNECTED", "SSH_SESSION_CLOSED"}
         for event in self.monitor_events:
             if event not in valid_events:
                 raise ValueError(f"未知事件类型: {event}")

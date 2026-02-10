@@ -5,7 +5,7 @@ HTTP连接池管理
 import logging
 import threading
 from typing import Dict, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -146,23 +146,23 @@ class ConnectionPool:
             with self.stats_lock:
                 self.stats.successful_requests += 1
             return result if result is not None else {}
-                
+
         except requests.exceptions.Timeout:
-            self.logger.error(f"请求超时: {url}")
+            self.logger.error(f"POST请求超时 (timeout={self.timeout}s): {url}")
             with self.stats_lock:
                 self.stats.timeout_errors += 1
                 self.stats.failed_requests += 1
-        except requests.exceptions.ConnectionError:
-            self.logger.error(f"连接错误: {url}")
+        except requests.exceptions.ConnectionError as e:
+            self.logger.error(f"POST连接错误: {url} - {str(e)}")
             with self.stats_lock:
                 self.stats.connection_errors += 1
                 self.stats.failed_requests += 1
         except requests.exceptions.HTTPError as e:
-            self.logger.error(f"HTTP错误: {e}")
+            self.logger.error(f"POST HTTP错误: {url} - 状态码: {e.response.status_code if e.response else 'N/A'} - {str(e)}")
             with self.stats_lock:
                 self.stats.failed_requests += 1
         except Exception as e:
-            self.logger.error(f"请求异常: {e}")
+            self.logger.error(f"POST请求异常: {url} - {type(e).__name__}: {str(e)}", exc_info=True)
             with self.stats_lock:
                 self.stats.failed_requests += 1
         
@@ -206,23 +206,23 @@ class ConnectionPool:
                 with self.stats_lock:
                     self.stats.failed_requests += 1
                 return False
-                
+
         except requests.exceptions.Timeout:
-            self.logger.error(f"请求超时: {url}")
+            self.logger.error(f"GET请求超时 (timeout={self.timeout}s): {url}")
             with self.stats_lock:
                 self.stats.timeout_errors += 1
                 self.stats.failed_requests += 1
-        except requests.exceptions.ConnectionError:
-            self.logger.error(f"连接错误: {url}")
+        except requests.exceptions.ConnectionError as e:
+            self.logger.error(f"GET连接错误: {url} - {str(e)}")
             with self.stats_lock:
                 self.stats.connection_errors += 1
                 self.stats.failed_requests += 1
         except requests.exceptions.HTTPError as e:
-            self.logger.error(f"HTTP错误: {e}")
+            self.logger.error(f"GET HTTP错误: {url} - 状态码: {e.response.status_code if e.response else 'N/A'} - {str(e)}")
             with self.stats_lock:
                 self.stats.failed_requests += 1
         except Exception as e:
-            self.logger.error(f"请求异常: {e}")
+            self.logger.error(f"GET请求异常: {url} - {type(e).__name__}: {str(e)}", exc_info=True)
             with self.stats_lock:
                 self.stats.failed_requests += 1
         

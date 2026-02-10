@@ -8,7 +8,7 @@ import logging
 import hashlib
 import urllib.parse
 import threading
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -60,6 +60,15 @@ class MultiPlatformNotifier:
         'LoginFail': '❌ 飞牛NAS-登录失败告警',
         'Logout': '👋 飞牛NAS-退出登录通知',
         'FoundDisk': '💾 飞牛NAS-发现新硬盘',
+        'SSH_SERVICE_STARTED': '✅ 飞牛NAS-SSH服务启动',
+        'SSH_SERVICE_STOPPED': '🛑 飞牛NAS-SSH服务停止',
+        'SSH_LISTEN': '✅ 飞牛NAS-SSH服务开启',
+        'SSH_INVALID_USER': '⚠️ 飞牛NAS-SSH无效用户尝试',
+        'SSH_AUTH_FAILED': '❌ 飞牛NAS-SSH认证失败',
+        'SSH_LOGIN_SUCCESS': '🔐 飞牛NAS-SSH登录成功',
+        'SSH_SESSION_OPENED': '✅ 飞牛NAS-SSH会话开启',
+        'SSH_DISCONNECTED': '👋 飞牛NAS-SSH断开连接',
+        'SSH_SESSION_CLOSED': '🔕 飞牛NAS-SSH会话关闭',
         'APP_CRASH': '💥 飞牛NAS-应用崩溃告警',
         'APP_UPDATE_FAILED': '💥 飞牛NAS-应用更新失败告警',
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '💥 飞牛NAS-应用启动失败告警',
@@ -82,6 +91,15 @@ class MultiPlatformNotifier:
         'LoginFail': '用户{user}登录失败，请检查是否有异常尝试。',
         'Logout': '用户{user}退出登录',
         'FoundDisk': '发现新硬盘{disk_info}',
+        'SSH_SERVICE_STARTED': 'SSH服务已启动',
+        'SSH_SERVICE_STOPPED': 'SSH服务已停止',
+        'SSH_LISTEN': 'SSH监听{address}:{port}',
+        'SSH_INVALID_USER': '无效用户{user}尝试登录',
+        'SSH_AUTH_FAILED': 'SSH认证失败{user_info}',
+        'SSH_LOGIN_SUCCESS': 'SSH用户{user}登录成功',
+        'SSH_SESSION_OPENED': 'SSH会话已开启',
+        'SSH_DISCONNECTED': 'SSH连接已断开',
+        'SSH_SESSION_CLOSED': 'SSH会话已关闭',
         'APP_CRASH': '应用{name}崩溃',
         'APP_UPDATE_FAILED': '应用{name}更新失败',
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '应用{name}启动失败',
@@ -104,6 +122,15 @@ class MultiPlatformNotifier:
         'LoginFail': '⚠️ 系统检测到登录失败，请检查是否有异常尝试。',
         'Logout': '📝 用户已安全退出系统。',
         'FoundDisk': '💾 检测到新存储设备接入系统。',
+        'SSH_SERVICE_STARTED': '🔧 SSH服务已启动，开始监听连接。',
+        'SSH_SERVICE_STOPPED': '🛑 SSH服务已停止。',
+        'SSH_LISTEN': '🔧 SSH服务开始监听端口。',
+        'SSH_INVALID_USER': '⚠️ 检测到无效用户登录尝试，请注意安全。',
+        'SSH_AUTH_FAILED': '⚠️ SSH认证失败，请确认是否为合法用户。',
+        'SSH_LOGIN_SUCCESS': '💡 SSH登录成功，请确认是否为本人操作。',
+        'SSH_SESSION_OPENED': '📝 SSH会话已建立。',
+        'SSH_DISCONNECTED': '📝 SSH连接已断开。',
+        'SSH_SESSION_CLOSED': '📝 SSH会话已关闭。',
         'APP_CRASH': '❗ 应用程序异常退出，建议检查应用状态和日志。',
         'APP_UPDATE_FAILED': '❗ 应用程序更新失败，建议检查应用状态和日志。',
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '❗ 应用程序启动失败（本地运行异常），建议检查应用状态和日志。',
@@ -161,7 +188,11 @@ class MultiPlatformNotifier:
         self.disk_wakeup_cache = {}  # {time_window: [event_data_list]}
         self.disk_spindown_cache = {}  # {time_window: [event_data_list]}
         self.merge_window = 5  # 5秒合并窗口
-        
+
+        # 线程控制
+        self._stop_flag = False
+        self._cache_lock = threading.Lock()  # 保护磁盘事件缓存的线程锁
+
         # 合并事件定时发送线程
         self._start_merge_timer()
         
@@ -187,33 +218,41 @@ class MultiPlatformNotifier:
     
     def _merge_timer_worker(self):
         """合并事件定时处理工作线程"""
-        while True:
+        while not self._stop_flag:
             try:
                 # 检查并处理过期的合并事件
                 current_time = time.time()
                 current_window = int(current_time / self.merge_window)
-                
+
                 # 检查前一个窗口是否有待合并的事件
                 prev_window = current_window - 1
-                
-                # 处理待合并的磁盘唤醒事件
-                if prev_window in self.disk_wakeup_cache and self.disk_wakeup_cache[prev_window]:
-                    self._send_merged_disk_event('DiskWakeup', self.disk_wakeup_cache[prev_window], prev_window)
-                    del self.disk_wakeup_cache[prev_window]
-                
-                # 处理待合并的磁盘休眠事件
-                if prev_window in self.disk_spindown_cache and self.disk_spindown_cache[prev_window]:
-                    self._send_merged_disk_event('DiskSpindown', self.disk_spindown_cache[prev_window], prev_window)
-                    del self.disk_spindown_cache[prev_window]
-                
-                # 清理太久之前的缓存（超过2个窗口的）
-                too_old_window = current_window - 3
-                self.disk_wakeup_cache = {k: v for k, v in self.disk_wakeup_cache.items() if k > too_old_window}
-                self.disk_spindown_cache = {k: v for k, v in self.disk_spindown_cache.items() if k > too_old_window}
-                
-                time.sleep(5)  # 每5秒检查一次
+
+                # 使用锁保护缓存访问
+                with self._cache_lock:
+                    # 处理待合并的磁盘唤醒事件
+                    if prev_window in self.disk_wakeup_cache and self.disk_wakeup_cache[prev_window]:
+                        self._send_merged_disk_event('DiskWakeup', self.disk_wakeup_cache[prev_window], prev_window)
+                        del self.disk_wakeup_cache[prev_window]
+
+                    # 处理待合并的磁盘休眠事件
+                    if prev_window in self.disk_spindown_cache and self.disk_spindown_cache[prev_window]:
+                        self._send_merged_disk_event('DiskSpindown', self.disk_spindown_cache[prev_window], prev_window)
+                        del self.disk_spindown_cache[prev_window]
+
+                    # 清理太久之前的缓存（超过2个窗口的）
+                    too_old_window = current_window - 3
+                    self.disk_wakeup_cache = {k: v for k, v in self.disk_wakeup_cache.items() if k > too_old_window}
+                    self.disk_spindown_cache = {k: v for k, v in self.disk_spindown_cache.items() if k > too_old_window}
+
+                # 使用短间隔睡眠以便快速响应停止信号
+                for _ in range(10):
+                    if self._stop_flag:
+                        break
+                    time.sleep(0.5)
             except Exception as e:
-                self.logger.error(f"合并定时器工作线程出错: {e}")
+                self.logger.error(f"合并定时器工作线程出错: {e}", exc_info=True)
+                if self._stop_flag:
+                    break
     
     def _send_merged_disk_event(self, event_type: str, event_list: List[Dict], time_window: int):
         """发送合并的磁盘事件"""
@@ -339,17 +378,19 @@ class MultiPlatformNotifier:
         # 获取当前时间窗口
         current_time = time.time()
         current_window = int(current_time / self.merge_window)
-        
-        # 将事件数据添加到对应类型的缓存中
-        if event_type == 'DiskWakeup':
-            if current_window not in self.disk_wakeup_cache:
-                self.disk_wakeup_cache[current_window] = []
-            self.disk_wakeup_cache[current_window].append(event_data.copy())  # 复制数据以避免后续修改影响
-        elif event_type == 'DiskSpindown':
-            if current_window not in self.disk_spindown_cache:
-                self.disk_spindown_cache[current_window] = []
-            self.disk_spindown_cache[current_window].append(event_data.copy())
-        
+
+        # 使用锁保护缓存访问，防止竞态条件
+        with self._cache_lock:
+            # 将事件数据添加到对应类型的缓存中
+            if event_type == 'DiskWakeup':
+                if current_window not in self.disk_wakeup_cache:
+                    self.disk_wakeup_cache[current_window] = []
+                self.disk_wakeup_cache[current_window].append(event_data.copy())  # 复制数据以避免后续修改影响
+            elif event_type == 'DiskSpindown':
+                if current_window not in self.disk_spindown_cache:
+                    self.disk_spindown_cache[current_window] = []
+                self.disk_spindown_cache[current_window].append(event_data.copy())
+
         # 返回True表示事件已加入合并队列
         self.logger.debug(f"磁盘事件已加入合并队列: {event_type} -> 窗口 {current_window}")
         return True
@@ -419,6 +460,29 @@ class MultiPlatformNotifier:
             minute_window = int(time.time() / 300)
             key = f"{event_type}_{minute_window}"
         
+        elif event_type in ['SSH_SERVICE_STARTED', 'SSH_SERVICE_STOPPED']:
+            # SSH服务启停：缩短去重窗口（30秒）
+            window = int(time.time() / 30)
+            key = f"{event_type}_{window}"
+        
+        elif event_type == 'SSH_LISTEN':
+            # SSH监听端口：按地址/端口+短窗口去重
+            window = int(time.time() / 30)
+            listens = event_data.get('listens') or []
+            if listens:
+                addrs = []
+                for item in listens:
+                    addr = item.get('address', '')
+                    port = item.get('port', '')
+                    if addr and port:
+                        addrs.append(f"{addr}:{port}")
+                addrs.sort()
+                key = f"ssh_listen_{'|'.join(addrs)}_{window}"
+            else:
+                addr = event_data.get('address', 'unknown')
+                port = event_data.get('port', 'unknown')
+                key = f"ssh_listen_{addr}:{port}_{window}"
+        
         elif event_type == 'UPS_ONBATT_LOWBATT':
             # UPS切换到电池供电：按时间（5分钟）去重
             minute_window = int(time.time() / 300)  # 5分钟窗口
@@ -428,6 +492,17 @@ class MultiPlatformNotifier:
             # UPS切换到市电供电：按时间（5分钟）去重
             minute_window = int(time.time() / 300)  # 5分钟窗口
             key = f"ups_online_{minute_window}"
+        elif event_type in ['SSH_SERVICE_STARTED', 'SSH_SERVICE_STOPPED', 'SSH_LISTEN']:
+            # SSH服务启动/监听：按小时去重
+            hour_window = int(time.time() / 3600)
+            key = f"{event_type}_{hour_window}"
+        elif event_type in ['SSH_INVALID_USER', 'SSH_AUTH_FAILED', 'SSH_LOGIN_SUCCESS',
+                            'SSH_SESSION_OPENED', 'SSH_DISCONNECTED', 'SSH_SESSION_CLOSED']:
+            # SSH事件：按用户/IP和时间（分钟）去重
+            user = event_data.get('user', 'unknown')
+            ip = event_data.get('IP', 'unknown')
+            minute_window = int(time.time() / 60)
+            key = f"{event_type}_{user}_{ip}_{minute_window}"
         
         else:
             # 登录/退出：按用户、IP和时间（分钟）去重
@@ -468,6 +543,9 @@ class MultiPlatformNotifier:
         # 根据事件类型添加特定字段
         if event_type in ['LoginSucc', 'LoginSucc2FA1', 'LoginFail', 'Logout']:
             content += '\n' + self._build_login_content(event_data)
+        elif event_type in ['SSH_SERVICE_STARTED', 'SSH_SERVICE_STOPPED', 'SSH_LISTEN', 'SSH_INVALID_USER', 'SSH_AUTH_FAILED',
+                            'SSH_LOGIN_SUCCESS', 'SSH_SESSION_OPENED', 'SSH_DISCONNECTED', 'SSH_SESSION_CLOSED']:
+            content += '\n' + self._build_ssh_content(event_type, event_data)
         elif event_type == 'FoundDisk':
             content += '\n' + self._build_disk_content(event_data)
         elif event_type == 'APP_CRASH':
@@ -553,6 +631,78 @@ class MultiPlatformNotifier:
         if serial := event_data.get('serial', ''):
             content += f"🔢 序列号: {serial}\n"
         
+        return content
+
+    def _build_ssh_content(self, event_type: str, event_data: Dict[str, Any]) -> str:
+        """构建SSH相关事件内容"""
+        content = ""
+        if event_type == 'SSH_SERVICE_STARTED':
+            content += "🔧 服务: ssh\n"
+        elif event_type == 'SSH_SERVICE_STOPPED':
+            content += "🔧 服务: ssh\n"
+        elif event_type == 'SSH_LISTEN':
+            if event_data.get('service_started'):
+                content += "🔧 服务: ssh\n"
+            listens = event_data.get('listens')
+            if listens:
+                seen = set()
+                for item in listens:
+                    address = item.get('address', '')
+                    port = item.get('port', '')
+                    key = f"{address}:{port}"
+                    if not address or not port or key in seen:
+                        continue
+                    seen.add(key)
+                    content += f"📡 监听地址: {address}\n"
+                    content += f"🔌 端口: {port}\n"
+            else:
+                address = event_data.get('address', '')
+                port = event_data.get('port', '')
+                content += f"📡 监听地址: {address}\n"
+                content += f"🔌 端口: {port}\n"
+        elif event_type == 'SSH_INVALID_USER':
+            user = event_data.get('user', '')
+            ip = event_data.get('IP', '')
+            port = event_data.get('port', '')
+            content += f"👤 用户名: {user}\n"
+            content += f"📍 IP地址: {ip}\n"
+            if port:
+                content += f"🔌 端口: {port}\n"
+        elif event_type == 'SSH_AUTH_FAILED':
+            user = event_data.get('user', '')
+            ip = event_data.get('IP', '')
+            port = event_data.get('port', '')
+            reason = event_data.get('reason', '')
+            if user:
+                content += f"👤 用户名: {user}\n"
+            if ip:
+                content += f"📍 IP地址: {ip}\n"
+            if port:
+                content += f"🔌 端口: {port}\n"
+            if reason:
+                content += f"⚠️ 失败原因: {reason}\n"
+        elif event_type == 'SSH_LOGIN_SUCCESS':
+            user = event_data.get('user', '')
+            ip = event_data.get('IP', '')
+            port = event_data.get('port', '')
+            content += f"👤 用户名: {user}\n"
+            content += f"📍 IP地址: {ip}\n"
+            if port:
+                content += f"🔌 端口: {port}\n"
+        elif event_type == 'SSH_SESSION_OPENED':
+            user = event_data.get('user', '')
+            content += f"👤 用户名: {user}\n"
+        elif event_type == 'SSH_DISCONNECTED':
+            user = event_data.get('user', '')
+            ip = event_data.get('IP', '')
+            port = event_data.get('port', '')
+            content += f"👤 用户名: {user}\n"
+            content += f"📍 IP地址: {ip}\n"
+            if port:
+                content += f"🔌 端口: {port}\n"
+        elif event_type == 'SSH_SESSION_CLOSED':
+            user = event_data.get('user', '')
+            content += f"👤 用户名: {user}\n"
         return content
     
     def _build_disk_wakeup_content(self, event_data: Dict[str, Any]) -> str:
@@ -856,6 +1006,44 @@ class MultiPlatformNotifier:
     
     def close(self):
         """关闭通知器"""
+        self.logger.info("正在关闭多平台通知器...")
+
+        # 设置停止标志
+        self._stop_flag = True
+
+        # 刷新所有待发送的磁盘事件
+        self._flush_pending_disk_events()
+
+        # 等待定时器线程结束
+        if hasattr(self, 'timer_thread') and self.timer_thread.is_alive():
+            self.timer_thread.join(timeout=10)
+
+        # 关闭连接池
         self.connection_pool.close()
+
+        # 清理缓存
         self.cleanup_cache()
+
         self.logger.info("多平台通知器已关闭")
+
+    def _flush_pending_disk_events(self):
+        """刷新所有待发送的磁盘事件"""
+        try:
+            with self._cache_lock:
+                # 发送所有待发送的磁盘唤醒事件
+                for time_window, event_list in self.disk_wakeup_cache.items():
+                    if event_list:
+                        self.logger.info(f"刷新待发送的磁盘唤醒事件: {len(event_list)} 个")
+                        self._send_merged_disk_event('DiskWakeup', event_list, time_window)
+
+                # 发送所有待发送的磁盘休眠事件
+                for time_window, event_list in self.disk_spindown_cache.items():
+                    if event_list:
+                        self.logger.info(f"刷新待发送的磁盘休眠事件: {len(event_list)} 个")
+                        self._send_merged_disk_event('DiskSpindown', event_list, time_window)
+
+                # 清空缓存
+                self.disk_wakeup_cache.clear()
+                self.disk_spindown_cache.clear()
+        except Exception as e:
+            self.logger.error(f"刷新待发送事件时出错: {e}", exc_info=True)
