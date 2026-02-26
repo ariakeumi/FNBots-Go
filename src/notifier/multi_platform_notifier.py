@@ -193,6 +193,14 @@ class MultiPlatformNotifier:
         self._stop_flag = False
         self._cache_lock = threading.Lock()  # 保护磁盘事件缓存的线程锁
 
+        # 发送健康状态
+        self._health_lock = threading.Lock()
+        self.last_attempt_time = None
+        self.last_success_time = None
+        self.consecutive_failures = 0
+        self.first_failure_time = None
+        self.total_failures_since_success = 0
+
         # 合并事件定时发送线程
         self._start_merge_timer()
         
@@ -210,6 +218,39 @@ class MultiPlatformNotifier:
             platforms.append('Bark')
         
         self.logger.info(f"多平台通知器初始化完成，支持平台: {', '.join(platforms) if platforms else '无'}, 去重窗口: {dedup_window}秒")
+
+    def _record_send_result(self, success: bool):
+        """记录发送结果用于健康监控"""
+        now = time.time()
+        with self._health_lock:
+            self.last_attempt_time = now
+            if success:
+                self.last_success_time = now
+                self.consecutive_failures = 0
+                self.first_failure_time = None
+                self.total_failures_since_success = 0
+            else:
+                if self.first_failure_time is None:
+                    self.first_failure_time = now
+                self.consecutive_failures += 1
+                self.total_failures_since_success += 1
+
+    def get_delivery_health(self) -> Dict[str, Any]:
+        """获取通知发送健康状态"""
+        with self._health_lock:
+            return {
+                'last_attempt_time': self.last_attempt_time,
+                'last_success_time': self.last_success_time,
+                'consecutive_failures': self.consecutive_failures,
+                'first_failure_time': self.first_failure_time,
+                'total_failures_since_success': self.total_failures_since_success,
+                'active_platforms': {
+                    'wechat': bool(self.wechat_webhook_url),
+                    'dingtalk': bool(self.dingtalk_webhook_url),
+                    'feishu': bool(self.feishu_webhook_url),
+                    'bark': bool(self.bark_url)
+                }
+            }
     
     def _start_merge_timer(self):
         """启动合并事件定时处理线程"""
@@ -300,8 +341,10 @@ class MultiPlatformNotifier:
         
         # 记录发送结果
         if results and any(results):
+            self._record_send_result(True)
             self.logger.info(f"合并事件发送成功: {event_type}, 数量: {len(event_list)}")
         else:
+            self._record_send_result(False)
             self.logger.warning(f"合并事件发送失败: {event_type}, 数量: {len(event_list)}")
     
     def send_notification(self, 
@@ -367,9 +410,11 @@ class MultiPlatformNotifier:
         # 处理结果
         if results and any(results):  # 至少一个平台发送成功
             self.sent_events[event_fingerprint] = time.time()
+            self._record_send_result(True)
             self.logger.info(f"通知发送成功: {event_type}")
             return True
         else:
+            self._record_send_result(False)
             self.logger.warning(f"所有通知发送失败: {event_type}")
             return False
     
@@ -939,9 +984,11 @@ class MultiPlatformNotifier:
         # 处理结果
         if results and any(results):  # 至少一个平台发送成功
             self.sent_events[event_fingerprint] = time.time()
+            self._record_send_result(True)
             self.logger.info(f"系统事件通知发送成功: {event_type}")
             return True
         else:
+            self._record_send_result(False)
             self.logger.warning(f"系统事件通知发送失败: {event_type}")
             return False
     

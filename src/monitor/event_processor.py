@@ -3,7 +3,7 @@
 """
 
 import logging
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable, Optional, List
 from datetime import datetime
 from threading import Timer
 
@@ -637,22 +637,29 @@ class EventProcessor:
     
     def _add_to_cache_and_schedule_send(self, cache_list, timer_attr, event_data, event_type, entry):
         """将事件添加到缓存并安排发送"""
-        # 添加事件到缓存
         timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-        event_entry = {
-            'disk': event_data.get('disk', ''),
-            'model': event_data.get('model', ''),
-            'serial': event_data.get('serial', ''),
-            'timestamp': timestamp,
-            'raw_log': getattr(entry, 'raw_data', '{}'),
-            'full_event_data': event_data
-        }
-        
-        cache_list.append(event_entry)
-        
-        # 输出标准格式日志
-        event_desc = "磁盘唤醒" if event_type == 'DiskWakeup' else "磁盘休眠"
-        print(f"[{event_desc}] 磁盘: {event_entry['disk']}, 型号: {event_entry['model']}, 序列号: {event_entry['serial']}, 时间: {timestamp}")
+        disk_details = self._extract_disk_details(event_data)
+        if not disk_details:
+            disk_details = [{
+                'disk': '',
+                'model': '',
+                'serial': ''
+            }]
+
+        for detail in disk_details:
+            event_entry = {
+                'disk': detail.get('disk', ''),
+                'model': detail.get('model', ''),
+                'serial': detail.get('serial', ''),
+                'timestamp': timestamp,
+                'raw_log': getattr(entry, 'raw_data', '{}'),
+                'full_event_data': event_data
+            }
+            cache_list.append(event_entry)
+
+            event_desc = "磁盘唤醒" if event_type == 'DiskWakeup' else "磁盘休眠"
+            disk_label = event_entry['disk'] or event_entry['serial'] or event_entry['model'] or "(未提供磁盘信息)"
+            print(f"[{event_desc}] 磁盘: {disk_label}, 型号: {event_entry['model']}, 序列号: {event_entry['serial']}, 时间: {timestamp}")
         
         # 取消之前的定时器
         old_timer = getattr(self, timer_attr, None)
@@ -723,6 +730,92 @@ class EventProcessor:
         
         # 清空缓存
         cache_list.clear()
+
+    def _extract_disk_details(self, event_data: Dict[str, Any]) -> List[Dict[str, str]]:
+        """从事件数据中提取磁盘信息"""
+        details = []
+
+        def add_candidate(source):
+            if isinstance(source, dict):
+                details.append(source)
+
+        data_section = event_data.get('data')
+        add_candidate(event_data)
+        if isinstance(data_section, dict):
+            add_candidate(data_section)
+
+        list_keys = [
+            'disks', 'disk_list', 'diskList', 'devices', 'device_list',
+            'DISKS', 'DISK_LIST', 'DEVICES'
+        ]
+        for container in filter(lambda x: isinstance(x, dict), [event_data, data_section]):
+            for key in list_keys:
+                items = container.get(key)
+                if isinstance(items, list):
+                    for item in items:
+                        add_candidate(item)
+
+        # 有些结构会把实际磁盘对象放在 'disk' 键下
+        for container in list(details):
+            disk_field = container.get('disk')
+            if isinstance(disk_field, dict):
+                add_candidate(disk_field)
+
+        normalized = []
+        for candidate in details:
+            normalized_entry = {
+                'disk': self._pick_disk_field(candidate),
+                'model': self._pick_field(candidate, ['model', 'MODEL', 'disk_model', 'diskModel']),
+                'serial': self._pick_field(candidate, ['serial', 'SERIAL', 'sn', 'SN', 'serial_number', 'serialNumber'])
+            }
+            if any(normalized_entry.values()):
+                normalized.append(normalized_entry)
+
+        return normalized
+
+    def _pick_disk_field(self, candidate: Dict[str, Any]) -> str:
+        disk = self._pick_field(candidate, [
+            'disk', 'device', 'path', 'name', 'disk_name', 'diskName', 'DEVICE', 'DISK'
+        ])
+        if disk:
+            return disk
+
+        # 尝试槽位/序号
+        slot = self._pick_field(candidate, ['slot', 'slot_id', 'bay', 'index', 'slotId'])
+        if slot:
+            return f"槽位 {slot}"
+
+        # 某些日志只提供路径列表
+        paths = candidate.get('paths') or candidate.get('PATHS')
+        if isinstance(paths, list) and paths:
+            return str(paths[0])
+
+        return ''
+
+    def _pick_field(self, candidate: Dict[str, Any], keys: List[str]) -> str:
+        for key in keys:
+            if key in candidate and candidate[key]:
+                return self._coerce_str(candidate[key])
+            upper = key.upper()
+            if upper in candidate and candidate[upper]:
+                return self._coerce_str(candidate[upper])
+            camel = key[:1].lower() + key[1:]
+            if camel in candidate and candidate[camel]:
+                return self._coerce_str(candidate[camel])
+        return ''
+
+    def _coerce_str(self, value: Any) -> str:
+        if isinstance(value, dict):
+            # 常见结构: {'path': '/dev/sda', 'sn': '123'}
+            for nested_key in ['path', 'device', 'name', 'disk', 'value']:
+                if nested_key in value and value[nested_key]:
+                    return str(value[nested_key])
+            return ''
+        if isinstance(value, list):
+            return str(value[0]) if value else ''
+        if value is None:
+            return ''
+        return str(value)
     
     def _handle_generic_login(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理通用登录事件"""

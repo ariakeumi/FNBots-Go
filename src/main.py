@@ -5,6 +5,9 @@ import socket
 import os
 import traceback
 from datetime import datetime
+import time
+from pathlib import Path
+import threading
 
 # 添加src目录到Python路径，解决模块导入问题
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,6 +29,7 @@ class Application:
         self.journal_watcher = None
         self.logger = None
         self.running = False
+        self.notification_health_thread = None
 
         
     def _print_banner(self):
@@ -128,6 +132,9 @@ class Application:
                 sys.exit(1)
             
             self.running = True
+
+            # 启动通知健康监控线程
+            self._start_notification_health_monitor()
             
             # 发送启动通知
             if self.notifier:
@@ -155,6 +162,107 @@ class Application:
             traceback.print_exc()
         finally:
             self.shutdown()
+
+    def _start_notification_health_monitor(self):
+        """启动通知发送健康监控"""
+        if not self.notifier or not self.config:
+            return
+        if not self.config.notification_restart_enabled:
+            return
+
+        self.notification_health_thread = threading.Thread(
+            target=self._notification_health_loop,
+            name="NotificationHealthMonitor",
+            daemon=True
+        )
+        self.notification_health_thread.start()
+
+    def _notification_health_loop(self):
+        """定期检查通知发送健康状态"""
+        check_interval = 60
+        while self.running:
+            try:
+                health = self.notifier.get_delivery_health()
+                active_platforms = health.get('active_platforms', {})
+                if not any(active_platforms.values()):
+                    time.sleep(check_interval)
+                    continue
+
+                last_attempt = health.get('last_attempt_time')
+                if last_attempt is None:
+                    time.sleep(check_interval)
+                    continue
+
+                consecutive_failures = health.get('consecutive_failures', 0)
+                first_failure_time = health.get('first_failure_time')
+
+                if consecutive_failures >= self.config.notification_restart_consecutive_failures and first_failure_time:
+                    failure_duration = time.time() - first_failure_time
+                    if failure_duration >= self.config.notification_restart_window:
+                        if self._should_throttle_notification_restart():
+                            time.sleep(check_interval)
+                            continue
+
+                        reason = (
+                            f"通知连续失败 {consecutive_failures} 次，持续 {failure_duration:.0f} 秒"
+                        )
+                        self._trigger_app_restart(reason)
+                        return
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"通知健康监控出错: {e}", exc_info=True)
+            time.sleep(check_interval)
+
+    def _should_throttle_notification_restart(self) -> bool:
+        """防止通知故障导致频繁重启"""
+        cooldown = self.config.notification_restart_cooldown
+        if cooldown <= 0:
+            return False
+
+        marker = Path("/tmp/notification_restart.lock")
+        now = time.time()
+        try:
+            if marker.exists():
+                last_ts = float(marker.read_text().strip() or "0")
+                if now - last_ts < cooldown:
+                    if self.logger:
+                        self.logger.warning(
+                            f"通知重启冷却中，距离上次 {now - last_ts:.0f} 秒"
+                        )
+                    return True
+            marker.write_text(str(now))
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"写入通知重启标记失败: {e}")
+        return False
+
+    def _trigger_app_restart(self, reason: str):
+        """触发应用重启（依赖容器/守护进程策略）"""
+        if self.logger:
+            self.logger.critical(f"触发应用重启，原因: {reason}")
+        else:
+            print(f"触发应用重启，原因: {reason}")
+
+        try:
+            restart_log = Path("/tmp/restart_reason.log")
+            with open(restart_log, "a") as f:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                f.write(f"{timestamp} - {reason}\n")
+        except Exception:
+            pass
+
+        try:
+            if self.notifier:
+                self.notifier.send_system_notification(
+                    'APP_ERROR',
+                    f'触发自动重启: {reason}',
+                    {'hostname': socket.gethostname(), 'version': '1.0'}
+                )
+        except Exception:
+            pass
+
+        time.sleep(2)
+        os._exit(1)
     
     def shutdown(self):
         """关闭应用"""

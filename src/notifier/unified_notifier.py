@@ -156,6 +156,24 @@ class UnifiedNotifier:
             stats['multi_platform_notifier'] = self.multi_platform_notifier.get_stats()
         
         return stats
+
+    def get_delivery_health(self) -> Dict[str, Any]:
+        """获取通知发送健康状态"""
+        if self.multi_platform_notifier:
+            return self.multi_platform_notifier.get_delivery_health()
+        return {
+            'last_attempt_time': None,
+            'last_success_time': None,
+            'consecutive_failures': 0,
+            'first_failure_time': None,
+            'total_failures_since_success': 0,
+            'active_platforms': {
+                'wechat': False,
+                'dingtalk': False,
+                'feishu': False,
+                'bark': False
+            }
+        }
     
     def close(self):
         """关闭通知器"""

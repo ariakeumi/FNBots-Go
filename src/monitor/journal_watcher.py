@@ -59,6 +59,13 @@ class JournalWatcher:
         self.heartbeat_interval = heartbeat_interval
         self.last_heartbeat = time.time()
         self.heartbeat_thread: Optional[threading.Thread] = None
+        self.health_check_thread: Optional[threading.Thread] = None
+
+        # 故障恢复机制
+        self.consecutive_restart_failures = 0
+        self.max_restart_failures = 3  # 连续失败3次后执行容器重启
+        self.last_successful_read = time.time()  # 最后一次成功读取日志的时间
+        self.max_idle_time = 86400  # 24小时无日志则认为异常（秒）
 
         # 日志源探测状态（用于判断是否有新日志）
         self.last_log_check_time = time.time()
@@ -107,7 +114,7 @@ class JournalWatcher:
         try:
             # 启动日志监控进程（支持多种方式）
             self._start_log_process()
-            
+
             # 启动心跳线程
             self.heartbeat_thread = threading.Thread(
                 target=self._heartbeat_monitor,
@@ -115,7 +122,24 @@ class JournalWatcher:
                 daemon=True
             )
             self.heartbeat_thread.start()
-            
+
+            # 启动定期健康检查线程（所有模式都启用）
+            self.health_check_thread = threading.Thread(
+                target=self._periodic_health_check,
+                name="PeriodicHealthCheck",
+                daemon=True
+            )
+            self.health_check_thread.start()
+
+            # 启动文件模式的额外健康检查（每分钟检查一次）
+            if self.log_mode == "file":
+                self.file_health_check_thread = threading.Thread(
+                    target=self._health_check_monitor,
+                    name="FileHealthCheckMonitor",
+                    daemon=True
+                )
+                self.file_health_check_thread.start()
+
             # 处理日志输出
             self._process_output()
             
@@ -218,10 +242,12 @@ class JournalWatcher:
 
     def _follow_file(self, path: str):
         """持续读取文件新增内容"""
+        self.logger.info(f"文件跟踪线程启动: {path}")
         cursor_inode, cursor_offset, _ = self._read_file_cursor(path)
         current_offset = cursor_offset or 0
         current_inode = cursor_inode
-        skip_history = cursor_inode is None and cursor_offset == 0
+        # 修改：如果没有游标记录，直接跳到文件末尾，不读取历史消息
+        skip_history = cursor_inode is None
         lines_since_save = 0
         last_save_time = time.time()
         save_interval_lines = 100
@@ -230,90 +256,103 @@ class JournalWatcher:
         old_file_offset = 0
         retry_delay = 2.0
 
-        while self.running and not self.file_stop_event.is_set():
-            try:
-                # 先读取轮转后的旧文件
-                if old_file_path and os.path.exists(old_file_path):
-                    self._drain_rotated_file(old_file_path, old_file_offset)
-                    old_file_path = None
-                    old_file_offset = 0
-                    current_offset = 0
-                    lines_since_save = 0
-                    last_save_time = time.time()
-
-                with open(path, 'r', encoding='utf-8', errors='replace') as logfile:
-                    inode = os.fstat(logfile.fileno()).st_ino
-                    mtime = os.path.getmtime(path)
-
-                    if current_inode and current_inode != inode:
-                        self.logger.info(f"检测到日志文件轮转: {path} (inode {current_inode} -> {inode})")
-                        old_file_path = self._locate_rotated_file(path, current_inode)
-                        if old_file_path:
-                            self.logger.info(f"将继续读取轮转文件剩余内容: {old_file_path}")
-                        else:
-                            self.logger.warning(f"未找到轮转文件，可能丢失部分日志: {path}")
-                        old_file_offset = current_offset
-                        current_inode = inode
+        try:
+            while self.running and not self.file_stop_event.is_set():
+                try:
+                    # 先读取轮转后的旧文件
+                    if old_file_path and os.path.exists(old_file_path):
+                        self._drain_rotated_file(old_file_path, old_file_offset)
+                        old_file_path = None
+                        old_file_offset = 0
                         current_offset = 0
-                        self._save_file_cursor(path, current_inode, current_offset, mtime)
                         lines_since_save = 0
                         last_save_time = time.time()
-                        continue  # 先处理旧文件
 
-                    current_inode = inode
-                    if skip_history:
-                        logfile.seek(0, os.SEEK_END)
-                        current_offset = logfile.tell()
-                        self._save_file_cursor(path, current_inode, current_offset, mtime)
-                        skip_history = False
-                        lines_since_save = 0
-                        last_save_time = time.time()
-                    else:
-                        logfile.seek(current_offset)
-                    retry_delay = 2.0  # 成功打开后重置退避
+                    with open(path, 'r', encoding='utf-8', errors='replace') as logfile:
+                        inode = os.fstat(logfile.fileno()).st_ino
+                        mtime = os.path.getmtime(path)
 
-                    while self.running and not self.file_stop_event.is_set():
-                        line = logfile.readline()
-                        if not line:
-                            if lines_since_save > 0:
-                                self._save_file_cursor(path, current_inode, current_offset, mtime)
-                                lines_since_save = 0
-                                last_save_time = time.time()
-                            if self.file_stop_event.wait(0.5):
-                                return
-                            continue
-
-                        current_offset = logfile.tell()
-                        lines_since_save += 1
-                        now = time.time()
-                        if (lines_since_save >= save_interval_lines or
-                                now - last_save_time >= save_interval_seconds):
+                        if current_inode and current_inode != inode:
+                            self.logger.info(f"检测到日志文件轮转: {path} (inode {current_inode} -> {inode})")
+                            old_file_path = self._locate_rotated_file(path, current_inode)
+                            if old_file_path:
+                                self.logger.info(f"将继续读取轮转文件剩余内容: {old_file_path}")
+                            else:
+                                self.logger.warning(f"未找到轮转文件，可能丢失部分日志: {path}")
+                            old_file_offset = current_offset
+                            current_inode = inode
+                            current_offset = 0
                             self._save_file_cursor(path, current_inode, current_offset, mtime)
                             lines_since_save = 0
-                            last_save_time = now
+                            last_save_time = time.time()
+                            continue  # 先处理旧文件
 
-                        self._publish_line(line)
+                        current_inode = inode
+                        if skip_history:
+                            # 跳到文件末尾，只读取新日志
+                            logfile.seek(0, os.SEEK_END)
+                            current_offset = logfile.tell()
+                            self._save_file_cursor(path, current_inode, current_offset, mtime)
+                            skip_history = False
+                            lines_since_save = 0
+                            last_save_time = time.time()
+                            self.logger.info(f"首次启动，跳过历史日志，从文件末尾开始: {path}")
+                        else:
+                            logfile.seek(current_offset)
+                        retry_delay = 2.0  # 成功打开后重置退避
 
-                if lines_since_save > 0:
-                    mtime = os.path.getmtime(path) if os.path.exists(path) else None
-                    self._save_file_cursor(path, current_inode, current_offset, mtime)
-                    lines_since_save = 0
-                    last_save_time = time.time()
+                        while self.running and not self.file_stop_event.is_set():
+                            try:
+                                line = logfile.readline()
+                                if not line:
+                                    if lines_since_save > 0:
+                                        self._save_file_cursor(path, current_inode, current_offset, mtime)
+                                        lines_since_save = 0
+                                        last_save_time = time.time()
+                                    if self.file_stop_event.wait(0.5):
+                                        return
+                                    continue
 
-                if self.file_stop_event.wait(1.0):
-                    break
-            except FileNotFoundError:
-                if self.file_stop_event.wait(min(retry_delay, 60.0)):
-                    break
-                retry_delay = min(retry_delay * 1.5, 60.0)
-            except PermissionError:
-                self.logger.warning(f"无权限读取日志文件: {path}")
-                if self.file_stop_event.wait(5.0):
-                    break
-            except Exception as exc:
-                self.logger.error(f"读取日志文件 {path} 时出错: {exc}", exc_info=True)
-                if self.file_stop_event.wait(2.0):
-                    break
+                                current_offset = logfile.tell()
+                                lines_since_save += 1
+                                now = time.time()
+                                if (lines_since_save >= save_interval_lines or
+                                        now - last_save_time >= save_interval_seconds):
+                                    self._save_file_cursor(path, current_inode, current_offset, mtime)
+                                    lines_since_save = 0
+                                    last_save_time = now
+
+                                self._publish_line(line)
+                            except Exception as exc:
+                                self.logger.error(f"处理日志行时出错 {path}: {exc}", exc_info=True)
+                                self.stats['errors'] += 1
+                                # 继续处理下一行，不退出线程
+
+                    if lines_since_save > 0:
+                        mtime = os.path.getmtime(path) if os.path.exists(path) else None
+                        self._save_file_cursor(path, current_inode, current_offset, mtime)
+                        lines_since_save = 0
+                        last_save_time = time.time()
+
+                    if self.file_stop_event.wait(1.0):
+                        break
+                except FileNotFoundError:
+                    self.logger.debug(f"文件不存在，等待重试: {path}")
+                    if self.file_stop_event.wait(min(retry_delay, 60.0)):
+                        break
+                    retry_delay = min(retry_delay * 1.5, 60.0)
+                except PermissionError:
+                    self.logger.warning(f"无权限读取日志文件: {path}")
+                    if self.file_stop_event.wait(5.0):
+                        break
+                except Exception as exc:
+                    self.logger.error(f"读取日志文件 {path} 时出错: {exc}", exc_info=True)
+                    if self.file_stop_event.wait(2.0):
+                        break
+        except Exception as exc:
+            self.logger.error(f"文件跟踪线程异常退出 {path}: {exc}", exc_info=True)
+        finally:
+            self.logger.warning(f"文件跟踪线程已退出: {path}")
 
     def _drain_rotated_file(self, old_path: str, start_offset: int):
         """读取轮转文件剩余内容，避免数据丢失"""
@@ -395,16 +434,60 @@ class JournalWatcher:
                 elif failure_count % 10 == 0:
                     self.logger.error(f"保存游标连续失败 {failure_count} 次: {cursor_file}")
 
+    def _health_check_monitor(self):
+        """健康检查监控线程（每分钟检查一次）"""
+        self.logger.info("健康检查线程启动（间隔: 60秒）")
+
+        while self.running:
+            time.sleep(60)  # 每分钟检查一次
+
+            if not self.running:
+                break
+
+            try:
+                # 检查文件跟踪线程状态
+                self._ensure_file_followers_alive()
+
+                # 检查队列状态
+                queue_size = self.line_queue.qsize()
+                if queue_size > 8000:  # 80% 阈值
+                    self.logger.warning(f"队列接近满载: {queue_size}/10000")
+
+                # 输出统计信息
+                stats = self.get_stats()
+                self.logger.debug(
+                    f"健康检查 - 队列: {stats['queue_size']}, "
+                    f"活跃线程: {stats['active_file_followers']}, "
+                    f"已处理: {stats['entries_read']}, "
+                    f"错误: {stats['errors']}, "
+                    f"丢弃: {stats['dropped_lines']}"
+                )
+
+            except Exception as e:
+                self.logger.error(f"健康检查失败: {e}", exc_info=True)
+
     def _ensure_file_followers_alive(self):
         """确保文件跟踪线程保持运行"""
         if not self.file_followers:
             return
+
+        dead_count = 0
         for path, thread in list(self.file_followers.items()):
             if thread.is_alive():
                 continue
-            self.logger.warning(f"文件跟踪线程已停止: {path}，准备重启")
+
+            dead_count += 1
+            self.logger.error(f"文件跟踪线程已死亡: {path}，准备重启")
             del self.file_followers[path]
-            self._start_file_follower(path)
+
+            try:
+                self._start_file_follower(path)
+                self.logger.info(f"文件跟踪线程重启成功: {path}")
+            except Exception as e:
+                self.logger.error(f"重启文件跟踪线程失败 {path}: {e}", exc_info=True)
+
+        if dead_count > 0:
+            self.logger.warning(f"共重启了 {dead_count} 个死亡线程")
 
     def _stop_file_followers(self):
         """停止所有文件跟踪线程"""
@@ -518,13 +601,14 @@ class JournalWatcher:
             '-f',          # 跟随模式（实时）
             '--no-tail',   # 不从历史开始
         ]
-        
+
         # 添加游标
         if cursor:
             cmd.extend(['--after-cursor', cursor])
         else:
-            # 如果没有游标，从当前时间开始
+            # 如果没有游标，从当前时间开始，不读取历史消息
             cmd.extend(['--since', 'now'])
+            self.logger.info("首次启动或重启，跳过历史日志，只监控新日志")
         
         # 添加journal目录 - 但首先检查目录中是否有实际的日志文件
         if paths:
@@ -604,18 +688,21 @@ class JournalWatcher:
     def _process_line(self, line: str):
         """处理单行日志（支持JSON和普通文本）"""
         try:
+            # 更新最后成功读取时间
+            self.last_successful_read = time.time()
+
             # 尝试解析为JSON
             data = json.loads(line)
             entry = JournalEntry.from_json(data, line)  # 传入原始行
-            
+
             if entry:
                 # 更新心跳
                 self.last_heartbeat = time.time()
-                
+
                 # 保存游标
                 if entry.cursor:
                     self._save_cursor(entry.cursor)
-                
+
                 # 处理日志条目
                 self._handle_journal_entry(entry)
             else:
@@ -1252,10 +1339,15 @@ class JournalWatcher:
         # json 已在模块顶部导入
         
         # 检查是否为MAINEVENT格式
-        mainevent_match = re.search(r'MAINEVENT\[\d+\]:\s*MAINEVENT:(\{.*?\})', line)
-        if mainevent_match:
+        if 'MAINEVENT:' in line:
             try:
-                event_json = mainevent_match.group(1)
+                # 提取JSON主体（支持嵌套对象，忽略尾部多余字符）
+                payload = line.split('MAINEVENT:', 1)[1].strip()
+                start = payload.find('{')
+                end = payload.rfind('}')
+                if start == -1 or end == -1 or end <= start:
+                    return False
+                event_json = payload[start:end + 1]
                 event_data = json.loads(event_json)
                 event_data['_event_type'] = 'MAINEVENT'
                 template = event_data.get('template')
@@ -1335,10 +1427,15 @@ class JournalWatcher:
                 pass
         
         # 检查是否为TRIMEVENT格式
-        trimevent_match = re.search(r'TRIMEVENT\[\d+\]:\s*TRIMEVENT:(\{.*?\})', line)
-        if trimevent_match:
+        if 'TRIMEVENT:' in line:
             try:
-                event_json = trimevent_match.group(1)
+                # 提取JSON主体（支持嵌套对象，忽略尾部多余字符）
+                payload = line.split('TRIMEVENT:', 1)[1].strip()
+                start = payload.find('{')
+                end = payload.rfind('}')
+                if start == -1 or end == -1 or end <= start:
+                    return False
+                event_json = payload[start:end + 1]
                 event_data = json.loads(event_json)
                 event_data['_event_type'] = 'TRIMEVENT'
                 event_id = event_data.get('eventId')
@@ -1584,16 +1681,82 @@ class JournalWatcher:
             time.sleep(self.heartbeat_interval)
 
             idle_duration = time.time() - self.last_heartbeat
+            total_idle_duration = time.time() - self.last_successful_read
             threshold = self.heartbeat_interval * (3 if self.log_mode == "file" else 2)
+
+            # 检查是否超过最大空闲时间（24小时无任何日志）
+            if total_idle_duration > self.max_idle_time:
+                self.logger.critical(
+                    f"严重警告：已经 {total_idle_duration/3600:.1f} 小时没有读取到任何日志，"
+                    f"系统可能存在严重问题，准备执行容器重启"
+                )
+                self._trigger_container_restart("长时间无日志输入")
+                return
 
             if idle_duration > threshold:
                 if self.log_mode == "file":
-                    self.logger.debug("心跳空闲，检查文件跟踪线程状态")
-                    self._ensure_file_followers_alive()
-                    self.last_heartbeat = time.time()
+                    self.logger.warning(f"文件模式心跳超时（{idle_duration:.0f}秒无活动），检查线程状态")
+
+                    # 检查文件跟踪线程状态
+                    dead_threads = []
+                    for path, thread in list(self.file_followers.items()):
+                        if not thread.is_alive():
+                            dead_threads.append(path)
+
+                    if dead_threads:
+                        self.logger.error(f"发现 {len(dead_threads)} 个死亡线程: {dead_threads}")
+                        for path in dead_threads:
+                            self.logger.warning(f"重启死亡线程: {path}")
+                            del self.file_followers[path]
+                            self._start_file_follower(path)
+                        # 重启成功，重置失败计数
+                        self.consecutive_restart_failures = 0
+                    else:
+                        # 所有线程都存活，但没有输出
+                        # 可能是日志文件没有新内容，或者线程卡住了
+                        self.logger.info(f"所有跟踪线程存活，但 {idle_duration:.0f}秒无日志输出")
+
+                        # 检查队列状态
+                        queue_size = self.line_queue.qsize()
+                        if queue_size > 0:
+                            self.logger.warning(f"队列中有 {queue_size} 条待处理日志，可能处理线程卡住")
+
+                        # 探测是否有新日志
+                        if self._probe_log_source_for_new_content():
+                            self.logger.info("探测到新日志内容，更新心跳")
+                            # 只有探测到新内容时才更新心跳
+                            self.last_heartbeat = time.time()
+                            self.consecutive_restart_failures = 0
+                        else:
+                            self.logger.warning("未探测到新日志内容，线程可能卡住，尝试重启")
+                            # 没有新内容，重启所有文件跟踪线程
+                            restart_success = True
+                            for path in list(self.file_followers.keys()):
+                                try:
+                                    self.logger.warning(f"重启文件跟踪线程: {path}")
+                                    thread = self.file_followers.pop(path)
+                                    self.file_stop_event.set()
+                                    time.sleep(0.5)  # 等待线程退出
+                                    self.file_stop_event.clear()
+                                    self._start_file_follower(path)
+                                except Exception as e:
+                                    self.logger.error(f"重启线程失败 {path}: {e}")
+                                    restart_success = False
+
+                            if restart_success:
+                                self.consecutive_restart_failures = 0
+                                self.last_heartbeat = time.time()
+                            else:
+                                self.consecutive_restart_failures += 1
+                                self.logger.error(f"线程重启失败（连续失败 {self.consecutive_restart_failures} 次）")
+
+                                if self.consecutive_restart_failures >= self.max_restart_failures:
+                                    self.logger.critical("连续重启失败次数过多，触发容器重启")
+                                    self._trigger_container_restart("连续重启失败")
+                                    return
                     continue
 
-                self.logger.warning(f"心跳超时（超过 {self.heartbeat_interval * 2} 秒未读到日志）")
+                self.logger.warning(f"心跳超时（超过 {threshold:.0f} 秒未读到日志）")
 
                 # 首先检查进程是否存活
                 if self.process is None or self.process.poll() is not None:
@@ -1601,28 +1764,43 @@ class JournalWatcher:
                     try:
                         self._restart_log_process()
                         self.last_heartbeat = time.time()
+                        self.consecutive_restart_failures = 0
                     except Exception as e:
                         self.logger.error(f"重启失败: {e}")
+                        self.consecutive_restart_failures += 1
+
+                        if self.consecutive_restart_failures >= self.max_restart_failures:
+                            self.logger.critical("连续重启失败次数过多，触发容器重启")
+                            self._trigger_container_restart("进程重启连续失败")
+                            return
                     continue
 
                 # 进程存活但无输出，探测是否有新日志
                 if self._probe_log_source_for_new_content():
                     self.logger.info("探测到新日志内容，更新心跳时间")
                     self.last_heartbeat = time.time()
+                    self.consecutive_restart_failures = 0
                     continue
 
-                # 探测失败，进程可能卡死，重启日志进程
+                # 探测失败，进程可能卡死，重启
                 self.logger.error("日志探测失败（无新内容），进程可能卡死，重启日志进程")
                 try:
                     self._restart_log_process()
                     self.last_heartbeat = time.time()
+                    self.consecutive_restart_failures = 0
                 except Exception as e:
                     self.logger.error(f"重启失败: {e}")
+                    self.consecutive_restart_failures += 1
+
+                    if self.consecutive_restart_failures >= self.max_restart_failures:
+                        self.logger.critical("连续重启失败次数过多，触发容器重启")
+                        self._trigger_container_restart("进程重启连续失败")
+                        return
 
             # 定期输出统计信息（每小时）
             if self.stats['entries_read'] % 3600 == 0 and self.stats['entries_read'] > 0:
                 self.logger.info(f"运行统计: {self.get_stats()}")
-    
+
     def _restart_log_process(self):
         """重启日志进程"""
         self.logger.info("准备重启日志进程")
@@ -1644,7 +1822,7 @@ class JournalWatcher:
             try:
                 self.logger.info(f"当前进程PID: {getattr(self.process, 'pid', 'Unknown')}")
                 self.logger.info(f"进程状态: {getattr(self.process, 'poll', lambda: 'Unknown')()}")
-                
+
                 # 终止进程组
                 if hasattr(self.process, 'poll') and self.process.poll() is None:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
@@ -1658,12 +1836,60 @@ class JournalWatcher:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
                 except Exception as e2:
                     self.logger.error(f"强制终止也失败: {e2}")
-            
+
             self.process = None
-        
+
         # 重新启动日志监控
         self._start_log_process()
         self.logger.info("日志进程已重启")
+
+    def _trigger_container_restart(self, reason: str):
+        """触发容器重启"""
+        self.logger.critical(f"触发容器重启，原因: {reason}")
+
+        try:
+            # 记录重启原因到文件
+            restart_log = Path("/tmp/restart_reason.log")
+            with open(restart_log, "a") as f:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                f.write(f"{timestamp} - {reason}\n")
+
+            # 发送通知（如果有配置）
+            if 'SYSTEM_RESTART' in self.event_handlers:
+                try:
+                    event_data = {
+                        'reason': reason,
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'consecutive_failures': self.consecutive_restart_failures
+                    }
+                    virtual_entry = JournalEntry(
+                        cursor='',
+                        timestamp=event_data['timestamp'],
+                        hostname='system',
+                        syslog_identifier='watchdog',
+                        message=f"系统监控触发重启: {reason}",
+                        priority=2,  # Critical
+                        pid=os.getpid(),
+                        raw_data=json.dumps(event_data, ensure_ascii=False),
+                        original_line=f"系统监控触发重启: {reason}"
+                    )
+                    self.event_handlers['SYSTEM_RESTART'](event_data, virtual_entry)
+                except Exception as e:
+                    self.logger.error(f"发送重启通知失败: {e}")
+
+            # 停止当前监控
+            self.running = False
+
+            # 执行容器重启
+            # 方法1: 通过退出码触发Docker重启策略
+            self.logger.critical("即将退出进程以触发容器重启...")
+            time.sleep(2)  # 给日志一点时间写入
+            os._exit(1)  # 使用非零退出码
+
+        except Exception as e:
+            self.logger.error(f"触发容器重启失败: {e}", exc_info=True)
+            # 最后的手段：强制退出
+            os._exit(1)
 
     def _probe_log_source_for_new_content(self) -> bool:
         """探测日志源是否有新内容（不是仅检查有内容）"""
@@ -1781,7 +2007,7 @@ class JournalWatcher:
         current_time = datetime.now()
         runtime = (current_time - self.stats['start_time']).total_seconds()
         
-        return {
+        stats_snapshot = {
             **self.stats,
             'runtime_seconds': runtime,
             'runtime_human': str(current_time - self.stats['start_time']),
@@ -1791,7 +2017,71 @@ class JournalWatcher:
             'active_file_followers': len([t for t in self.file_followers.values() if t.is_alive()]),
             'cursor_save_failures': sum(self.cursor_save_failures.values())
         }
+        # 兼容旧字段名
+        stats_snapshot.setdefault('events_triggered', stats_snapshot.get('events_processed', 0))
+        return stats_snapshot
     
     def is_running(self) -> bool:
         """检查是否在运行"""
         return self.running
+
+    def _periodic_health_check(self):
+        """定期健康检查线程（每5分钟执行一次）"""
+        check_interval = 300  # 5分钟
+        self.logger.info(f"定期健康检查线程启动（间隔: {check_interval}秒）")
+
+        while self.running:
+            time.sleep(check_interval)
+
+            try:
+                # 1. 检查线程状态
+                thread_status = {
+                    'heartbeat': self.heartbeat_thread.is_alive() if self.heartbeat_thread else False,
+                    'stdout': self.stdout_thread.is_alive() if self.stdout_thread else False,
+                }
+
+                if self.log_mode == "file":
+                    thread_status['file_followers'] = {
+                        path: thread.is_alive()
+                        for path, thread in self.file_followers.items()
+                    }
+
+                dead_threads = [name for name, alive in thread_status.items() if not alive and name != 'file_followers']
+                if dead_threads:
+                    self.logger.error(f"发现死亡线程: {dead_threads}")
+
+                # 2. 检查队列状态
+                queue_size = self.line_queue.qsize()
+                if queue_size > 1000:
+                    self.logger.warning(f"队列积压严重: {queue_size} 条待处理")
+
+                # 3. 检查空闲时间
+                idle_time = time.time() - self.last_successful_read
+                if idle_time > 3600:  # 1小时
+                    self.logger.warning(f"已经 {idle_time/3600:.1f} 小时没有成功读取日志")
+
+                # 4. 输出健康状态
+                stats = self.get_stats()
+                events_processed = stats.get('events_processed')
+                if events_processed is None:
+                    # 兼容旧字段名
+                    events_processed = stats.get('events_triggered', 0)
+
+                self.logger.info(
+                    f"健康检查 - 已读取: {stats.get('entries_read', 0)}, "
+                    f"已处理: {events_processed}, "
+                    f"错误: {stats.get('errors', 0)}, "
+                    f"队列: {queue_size}, "
+                    f"空闲: {idle_time:.0f}秒"
+                )
+
+                # 5. 检查是否需要主动探测
+                if idle_time > 1800:  # 30分钟无日志
+                    self.logger.info("长时间无日志，执行主动探测")
+                    if self._probe_log_source_for_new_content():
+                        self.logger.info("探测成功，发现新内容")
+                    else:
+                        self.logger.warning("探测未发现新内容")
+
+            except Exception as e:
+                self.logger.error(f"健康检查出错: {e}", exc_info=True)

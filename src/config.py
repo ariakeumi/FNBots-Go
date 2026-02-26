@@ -53,6 +53,10 @@ class Config:
     heartbeat_interval: int = 180  #3分钟
     file_check_interval: int = 240 #4分钟
     max_log_age: int = 7
+    notification_restart_enabled: bool = True
+    notification_restart_consecutive_failures: int = 10
+    notification_restart_window: int = 1800  # 30分钟
+    notification_restart_cooldown: int = 3600  # 1小时
     
 
     
@@ -161,6 +165,22 @@ class Config:
         if log_retention := os.getenv('LOG_RETENTION_DAYS'):
             self.log_retention_days = int(log_retention)
             self._env_set_keys.add('log_retention_days')
+
+        if notify_restart_enabled := os.getenv('NOTIFY_RESTART_ENABLED'):
+            self.notification_restart_enabled = notify_restart_enabled.lower() in ['1', 'true', 'yes', 'on']
+            self._env_set_keys.add('notification_restart_enabled')
+
+        if notify_restart_failures := os.getenv('NOTIFY_RESTART_CONSECUTIVE'):
+            self.notification_restart_consecutive_failures = int(notify_restart_failures)
+            self._env_set_keys.add('notification_restart_consecutive_failures')
+
+        if notify_restart_window := os.getenv('NOTIFY_RESTART_WINDOW'):
+            self.notification_restart_window = int(notify_restart_window)
+            self._env_set_keys.add('notification_restart_window')
+
+        if notify_restart_cooldown := os.getenv('NOTIFY_RESTART_COOLDOWN'):
+            self.notification_restart_cooldown = int(notify_restart_cooldown)
+            self._env_set_keys.add('notification_restart_cooldown')
 
     
     def _validate(self):
