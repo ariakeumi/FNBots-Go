@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import Config
 from utils.logger import setup_logging
-from monitor.journal_watcher import JournalWatcher
+from monitor.db_log_poller import DBLogPoller
 from monitor.event_processor import EventProcessor
 from notifier.unified_notifier import UnifiedNotifier
 
@@ -26,7 +26,7 @@ class Application:
         self.config = None
         self.notifier = None
         self.event_processor = None
-        self.journal_watcher = None
+        self.log_poller = None
         self.logger = None
         self.running = False
         self.notification_health_thread = None
@@ -36,7 +36,7 @@ class Application:
         """打印启动横幅"""
         banner = f"""
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-        监控模式: 实时事件驱动 (支持journalctl和syslog)
+        监控模式: 数据库轮询 (logger_data.db3 log 表)
         通知方式: 企业微信/钉钉/飞书机器人/Bark
 
         """
@@ -85,22 +85,22 @@ class Application:
             self.event_processor = EventProcessor(self.notifier, self.config)
             print("事件处理器初始化完成")
             
-            # 初始化日志监视器
-            print("正在初始化日志监视器...")
-            self.journal_watcher = JournalWatcher(
-                journal_paths=self.config.journal_paths,
+            # 初始化数据库日志轮询器
+            print("正在初始化数据库日志轮询器...")
+            self.log_poller = DBLogPoller(
+                db_path=self.config.logger_db_path,
                 cursor_dir=self.config.cursor_dir,
-                eventlogger_log_path=self.config.eventlogger_log_path,
-                heartbeat_interval=self.config.heartbeat_interval
+                poll_interval=self.config.logger_poll_interval,
+                monitor_events=self.config.monitor_events,
             )
-            print(f"日志监视器初始化完成（心跳间隔: {self.config.heartbeat_interval}秒）")
+            print(f"数据库轮询器初始化完成（间隔: {self.config.logger_poll_interval}秒，数据库: {self.config.logger_db_path}）")
             
             # 注册事件处理器
             print("开始注册事件处理器...")
             for event_type in self.config.monitor_events:
                 handler = self.event_processor.get_handler(event_type)
                 if handler:
-                    self.journal_watcher.add_handler(event_type, handler)
+                    self.log_poller.add_handler(event_type, handler)
                     print(f"✓ 注册事件处理器: {event_type}")
                 else:
                     print(f"✗ 未知事件类型: {event_type}")
@@ -148,15 +148,19 @@ class Application:
             signal.signal(signal.SIGINT, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
             
-            # 启动监视器
-            if self.journal_watcher:
-                print("启动日志监视器...")
-                self.journal_watcher.start()
+            # 启动数据库轮询器
+            if self.log_poller:
+                print("启动数据库日志轮询器...")
+                self.log_poller.start()
             else:
-                print("无法启动日志监视器")
-            
+                print("无法启动数据库轮询器")
+
+            # 保持主线程运行，直到收到 SIGINT/SIGTERM 将 self.running 置为 False
+            while self.running:
+                time.sleep(1)
+
         except KeyboardInterrupt:
-            print("\\n接收到中断信号...")
+            print("\n接收到中断信号...")
         except Exception as e:
             print(f"运行时错误: {e}")
             traceback.print_exc()
@@ -276,9 +280,9 @@ class Application:
                 {'hostname': socket.gethostname(), 'version': '1.0'}
             )
 
-        # 停止监视器
-        if self.journal_watcher:
-            self.journal_watcher.stop()
+        # 停止数据库轮询器
+        if self.log_poller:
+            self.log_poller.stop()
 
         # 停止运行日志清理线程
         if self.logger and hasattr(self.logger, 'cleanup_stop_flag'):

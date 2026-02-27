@@ -22,7 +22,7 @@ class StoredLogEntry:
     processed_data: Dict[str, Any]  # 处理后的事件数据
     notification_sent: bool  # 是否已发送通知
     stored_at: str     # 存储时间
-    source: str        # 日志来源（syslog/journalctl等）
+    source: str        # 日志来源（db 等）
 
 
 class LogStorage:

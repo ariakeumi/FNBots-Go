@@ -11,26 +11,11 @@ ENV PYTHONPATH=/app
 # 设置工作目录
 WORKDIR /app
 
-# 安装必要的系统工具（如果可用）
-# 包含ps、top、free等命令
-# 包含pstree、killall等命令
-# 包含netstat、ifconfig等命令
-# 包含ip、ss等命令
+# 仅保留健康检查所需的 pgrep（procps）
 RUN set -ex && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-        systemd \
-        sudo \
-        procps \
-        coreutils \
-        psmisc \
-        net-tools \
-        iproute2 \
-    && rm -rf /var/lib/apt/lists/* \
-    || true
-
-# 配置sudo权限（允许应用用户运行journalctl，如果存在）
-RUN echo 'ALL ALL=(ALL) NOPASSWD: /usr/bin/journalctl' >> /etc/sudoers 2>/dev/null || echo "sudoers配置可能需要额外处理"
+    apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件
 COPY requirements.txt .
@@ -44,8 +29,8 @@ COPY src/ ./src/
 # 复制健康检查脚本（已在复制时设置执行权限）
 COPY --chmod=755 healthcheck.sh /app/healthcheck.sh
 
-# 创建数据目录
-RUN mkdir -p /app/logs /tmp/cursor
+# 应用写入的目录（与 config 中 log_dir、cursor_dir 一致）
+RUN mkdir -p /app/data/logs /app/data/cursor
 
 
 

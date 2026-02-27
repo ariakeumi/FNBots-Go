@@ -4,39 +4,22 @@ services:
     container_name: fn-message-bots
     restart: unless-stopped
     network_mode: host
-    pid: host
 
-    # 挂载系统日志目录（关键配置）
     volumes:
-      # journal二进制日志（如果存在）
-      - /var/log/journal:/var/log/journal:ro
-      - /run/log/journal:/run/log/journal:ro
-      # 文本日志（可选）
-      - /var/log/syslog:/var/log/syslog:ro
-      - /usr/trim/logs/eventlogger_service.log:/usr/trim/logs/eventlogger_service.log:ro
-      # 应用数据目录
-      - ./data/logs:/app/logs:rw
-      - ./data/cursor:/tmp/cursor:rw
-      # 配置文件目录
+      # 应用数据：运行日志与轮询游标（与 config 中 log_dir、cursor_dir 对应）
+      - ./data/logs:/app/data/logs:rw
+      - ./data/cursor:/app/data/cursor:rw
+      # eventlogger 数据库（只读），供轮询 log 表
+      - /usr/trim/var/eventlogger_service:/usr/trim/var/eventlogger_service:ro
+      # 配置文件
       - ./config:/app/config:ro
 
-    # 环境变量配置
     environment:
-      # 企业微信Webhook URL (可选)
       - WECHAT_WEBHOOK_URL=${WECHAT_WEBHOOK_URL}
-      # 钉钉Webhook URL (可选)
       - DINGTALK_WEBHOOK_URL=${DINGTALK_WEBHOOK_URL}
-      # 飞书Webhook URL (可选)
       - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL}
-      # Bark推送URL (可选)
       - BARK_URL=${BARK_URL}
-
       - TZ=Asia/Shanghai
-
-    cap_add:
-      # 读取系统日志所需的权限
-      - DAC_READ_SEARCH
-      # 进程追踪权限（用于journalctl）
-      - SYS_PTRACE
-      # 审计日志读取权限
-      - AUDIT_READ
+      # 可选：若数据库路径不同可覆盖
+      # - LOGGER_DB_PATH=/usr/trim/var/eventlogger_service/logger_data.db3
+      # - LOGGER_POLL_INTERVAL=3

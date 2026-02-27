@@ -27,7 +27,7 @@ class MultiPlatformMessage:
         return {
             "msgtype": "text",
             "text": {
-                "content": f"{self.title}\n\n{self.content}"
+                "content": f"{self.title}\n{self.content}"
             }
         }
     
@@ -36,7 +36,7 @@ class MultiPlatformMessage:
         return {
             "msgtype": "text",
             "text": {
-                "content": f"{self.title}\n\n{self.content}"
+                "content": f"{self.title}\n{self.content}"
             }
         }
     
@@ -45,7 +45,7 @@ class MultiPlatformMessage:
         return {
             "msg_type": "text",
             "content": {
-                "text": f"{self.title}\n\n{self.content}"
+                "text": f"{self.title}\n{self.content}"
             }
         }
 
@@ -60,15 +60,10 @@ class MultiPlatformNotifier:
         'LoginFail': '❌ 飞牛NAS-登录失败告警',
         'Logout': '👋 飞牛NAS-退出登录通知',
         'FoundDisk': '💾 飞牛NAS-发现新硬盘',
-        'SSH_SERVICE_STARTED': '✅ 飞牛NAS-SSH服务启动',
-        'SSH_SERVICE_STOPPED': '🛑 飞牛NAS-SSH服务停止',
-        'SSH_LISTEN': '✅ 飞牛NAS-SSH服务开启',
         'SSH_INVALID_USER': '⚠️ 飞牛NAS-SSH无效用户尝试',
         'SSH_AUTH_FAILED': '❌ 飞牛NAS-SSH认证失败',
         'SSH_LOGIN_SUCCESS': '🔐 飞牛NAS-SSH登录成功',
-        'SSH_SESSION_OPENED': '✅ 飞牛NAS-SSH会话开启',
         'SSH_DISCONNECTED': '👋 飞牛NAS-SSH断开连接',
-        'SSH_SESSION_CLOSED': '🔕 飞牛NAS-SSH会话关闭',
         'APP_CRASH': '💥 飞牛NAS-应用崩溃告警',
         'APP_UPDATE_FAILED': '💥 飞牛NAS-应用更新失败告警',
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '💥 飞牛NAS-应用启动失败告警',
@@ -78,10 +73,20 @@ class MultiPlatformNotifier:
         'UPS_ONBATT': '⚠️ 飞牛NAS-UPS切换到电池供电模式',
         'UPS_ONBATT_LOWBATT': '🚨 飞牛NAS-UPS切换到电池供电模式',
         'UPS_ONLINE': '✅ 飞牛NAS-UPS切换到市电供电模式',
+        'UPS_ENABLE': '🔌 飞牛NAS-开启UPS支持',
+        'UPS_DISABLE': '🔌 飞牛NAS-关闭UPS支持',
         'DiskWakeup': '☀️ 飞牛NAS-磁盘唤醒通知',
         'DiskSpindown': '🌙 飞牛NAS-磁盘休眠通知',
         'APP_START': '🔔 飞牛NAS-监控启动通知',
-        'APP_STOP': '🔕 飞牛NAS-监控关闭通知'
+        'APP_STOP': '🔕 飞牛NAS-监控关闭通知',
+        # 数据库 log 表 eventId 直接对应（应用生命周期）
+        'APP_STARTED': '✅ 飞牛NAS-应用已启动',
+        'APP_STOPPED': '🛑 飞牛NAS-应用已停止',
+        'APP_UPDATED': '🔄 飞牛NAS-应用已更新',
+        'APP_INSTALLED': '📦 飞牛NAS-应用已安装',
+        'APP_AUTO_STARTED': '▶️ 飞牛NAS-应用已自启动',
+        'APP_UNINSTALLED': '🗑️ 飞牛NAS-应用已卸载',
+        'DISK_IO_ERR': '⚠️ 飞牛NAS-磁盘IO错误告警',
     }
     
     # Bark事件标题映射 - 用于Bark推送，标题统一为"飞牛NAS通知"
@@ -91,15 +96,10 @@ class MultiPlatformNotifier:
         'LoginFail': '用户{user}登录失败，请检查是否有异常尝试。',
         'Logout': '用户{user}退出登录',
         'FoundDisk': '发现新硬盘{disk_info}',
-        'SSH_SERVICE_STARTED': 'SSH服务已启动',
-        'SSH_SERVICE_STOPPED': 'SSH服务已停止',
-        'SSH_LISTEN': 'SSH监听{address}:{port}',
         'SSH_INVALID_USER': '无效用户{user}尝试登录',
         'SSH_AUTH_FAILED': 'SSH认证失败{user_info}',
         'SSH_LOGIN_SUCCESS': 'SSH用户{user}登录成功',
-        'SSH_SESSION_OPENED': 'SSH会话已开启',
         'SSH_DISCONNECTED': 'SSH连接已断开',
-        'SSH_SESSION_CLOSED': 'SSH会话已关闭',
         'APP_CRASH': '应用{name}崩溃',
         'APP_UPDATE_FAILED': '应用{name}更新失败',
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '应用{name}启动失败',
@@ -107,12 +107,21 @@ class MultiPlatformNotifier:
         'CPU_USAGE_ALARM': 'CPU使用率超过{threshold}%',
         'CPU_TEMPERATURE_ALARM': 'CPU温度超过{threshold}°C',
         'UPS_ONBATT': 'UPS提示：UPS切换到电池供电',
-        'UPS_ONBATT_LOWBATT': 'UPS提示：UPS电池电量低警告',
+        'UPS_ONBATT_LOWBATT': 'UPS提示：UPS低电量自动关机',
         'UPS_ONLINE': 'UPS提示：UPS切换到市电供电',
+        'UPS_ENABLE': '已开启UPS支持',
+        'UPS_DISABLE': '已关闭UPS支持',
         'DiskWakeup': '磁盘被唤醒',
         'DiskSpindown': '磁盘进入休眠状态',
         'APP_START': '飞牛NAS通知启动',
-        'APP_STOP': '飞牛NAS通知已停止'
+        'APP_STOP': '飞牛NAS通知已停止',
+        'APP_STARTED': '应用{name}已启动',
+        'APP_STOPPED': '应用{name}已停止',
+        'APP_UPDATED': '应用{name}已更新',
+        'APP_INSTALLED': '应用{name}已安装',
+        'APP_AUTO_STARTED': '应用{name}已自启动',
+        'APP_UNINSTALLED': '应用{name}已卸载',
+        'DISK_IO_ERR': '磁盘{dev}发生IO错误，错误次数{err_cnt}',
     }
     
     # 事件备注
@@ -122,15 +131,10 @@ class MultiPlatformNotifier:
         'LoginFail': '⚠️ 系统检测到登录失败，请检查是否有异常尝试。',
         'Logout': '📝 用户已安全退出系统。',
         'FoundDisk': '💾 检测到新存储设备接入系统。',
-        'SSH_SERVICE_STARTED': '🔧 SSH服务已启动，开始监听连接。',
-        'SSH_SERVICE_STOPPED': '🛑 SSH服务已停止。',
-        'SSH_LISTEN': '🔧 SSH服务开始监听端口。',
         'SSH_INVALID_USER': '⚠️ 检测到无效用户登录尝试，请注意安全。',
         'SSH_AUTH_FAILED': '⚠️ SSH认证失败，请确认是否为合法用户。',
         'SSH_LOGIN_SUCCESS': '💡 SSH登录成功，请确认是否为本人操作。',
-        'SSH_SESSION_OPENED': '📝 SSH会话已建立。',
         'SSH_DISCONNECTED': '📝 SSH连接已断开。',
-        'SSH_SESSION_CLOSED': '📝 SSH会话已关闭。',
         'APP_CRASH': '❗ 应用程序异常退出，建议检查应用状态和日志。',
         'APP_UPDATE_FAILED': '❗ 应用程序更新失败，建议检查应用状态和日志。',
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '❗ 应用程序启动失败（本地运行异常），建议检查应用状态和日志。',
@@ -138,12 +142,21 @@ class MultiPlatformNotifier:
         'CPU_USAGE_ALARM': '⚠️ CPU 使用率超过阈值，建议检查系统负载或关闭占用高的进程。',
         'CPU_TEMPERATURE_ALARM': '⚠️ CPU 温度超过阈值，请检查散热与机箱通风。',
         'UPS_ONBATT': '⚠️ UPS切换到电池供电模式，请注意电池电量。',
-        'UPS_ONBATT_LOWBATT': '⚠️ UPS切换到电池供电模式，电池电量低，请尽快恢复市电供应。',
+        'UPS_ONBATT_LOWBATT': '⚠️ UPS切换到电池供电模式，低电量自动关机，请尽快恢复市电供应。',
         'UPS_ONLINE': '✅ UPS切换到市电供电模式，电力供应恢复正常。',
+        'UPS_ENABLE': '🔌 系统已开启 UPS 支持。',
+        'UPS_DISABLE': '🔌 系统已关闭 UPS 支持。',
         'DiskWakeup': '🌙 磁盘已被唤醒。',
         'DiskSpindown': '🌙 磁盘已进入休眠状态。',
         'APP_START': '🚀 飞牛NAS日志监控服务已启动，开始监控系统事件。',
-        'APP_STOP': '🛑 飞牛NAS日志监控服务已停止，暂停监控系统事件。'
+        'APP_STOP': '🛑 飞牛NAS日志监控服务已停止，暂停监控系统事件。',
+        'APP_STARTED': '📱 应用已成功启动。',
+        'APP_STOPPED': '🛑 应用已停止运行。',
+        'APP_UPDATED': '🔄 应用已更新到新版本。',
+        'APP_INSTALLED': '📦 新应用已安装。',
+        'APP_AUTO_STARTED': '▶️ 应用已随系统自启动。',
+        'APP_UNINSTALLED': '🗑️ 应用已卸载。',
+        'DISK_IO_ERR': '⚠️ 磁盘发生IO错误，请检查硬盘健康与连接。',
     }
     
     def __init__(self, 
@@ -501,32 +514,14 @@ class MultiPlatformNotifier:
             app_name = data.get('DISPLAY_NAME', data.get('APP_NAME', 'unknown'))
             minute_window = int(time.time() / 300)
             key = f"{event_type}_{app_name}_{minute_window}"
+        elif event_type in ['APP_STARTED', 'APP_STOPPED', 'APP_UPDATED', 'APP_INSTALLED', 'APP_AUTO_STARTED', 'APP_UNINSTALLED']:
+            data = event_data.get('data', {})
+            app_name = data.get('DISPLAY_NAME', data.get('APP_NAME', 'unknown'))
+            minute_window = int(time.time() / 300)
+            key = f"{event_type}_{app_name}_{minute_window}"
         elif event_type in ['CPU_USAGE_ALARM', 'CPU_TEMPERATURE_ALARM']:
             minute_window = int(time.time() / 300)
             key = f"{event_type}_{minute_window}"
-        
-        elif event_type in ['SSH_SERVICE_STARTED', 'SSH_SERVICE_STOPPED']:
-            # SSH服务启停：缩短去重窗口（30秒）
-            window = int(time.time() / 30)
-            key = f"{event_type}_{window}"
-        
-        elif event_type == 'SSH_LISTEN':
-            # SSH监听端口：按地址/端口+短窗口去重
-            window = int(time.time() / 30)
-            listens = event_data.get('listens') or []
-            if listens:
-                addrs = []
-                for item in listens:
-                    addr = item.get('address', '')
-                    port = item.get('port', '')
-                    if addr and port:
-                        addrs.append(f"{addr}:{port}")
-                addrs.sort()
-                key = f"ssh_listen_{'|'.join(addrs)}_{window}"
-            else:
-                addr = event_data.get('address', 'unknown')
-                port = event_data.get('port', 'unknown')
-                key = f"ssh_listen_{addr}:{port}_{window}"
         
         elif event_type == 'UPS_ONBATT_LOWBATT':
             # UPS切换到电池供电：按时间（5分钟）去重
@@ -537,18 +532,20 @@ class MultiPlatformNotifier:
             # UPS切换到市电供电：按时间（5分钟）去重
             minute_window = int(time.time() / 300)  # 5分钟窗口
             key = f"ups_online_{minute_window}"
-        elif event_type in ['SSH_SERVICE_STARTED', 'SSH_SERVICE_STOPPED', 'SSH_LISTEN']:
-            # SSH服务启动/监听：按小时去重
-            hour_window = int(time.time() / 3600)
-            key = f"{event_type}_{hour_window}"
-        elif event_type in ['SSH_INVALID_USER', 'SSH_AUTH_FAILED', 'SSH_LOGIN_SUCCESS',
-                            'SSH_SESSION_OPENED', 'SSH_DISCONNECTED', 'SSH_SESSION_CLOSED']:
+        elif event_type in ['UPS_ENABLE', 'UPS_DISABLE']:
+            minute_window = int(time.time() / 300)
+            key = f"{event_type}_{minute_window}"
+        elif event_type in ['SSH_INVALID_USER', 'SSH_AUTH_FAILED', 'SSH_LOGIN_SUCCESS', 'SSH_DISCONNECTED']:
             # SSH事件：按用户/IP和时间（分钟）去重
             user = event_data.get('user', 'unknown')
             ip = event_data.get('IP', 'unknown')
             minute_window = int(time.time() / 60)
             key = f"{event_type}_{user}_{ip}_{minute_window}"
-        
+        elif event_type == 'DISK_IO_ERR':
+            data = event_data.get('data', {})
+            dev = data.get('DEV', data.get('dev', 'unknown'))
+            minute_window = int(time.time() / 60)
+            key = f"disk_io_err_{dev}_{minute_window}"
         else:
             # 登录/退出：按用户、IP和时间（分钟）去重
             user = event_data.get('user', 'unknown')
@@ -588,13 +585,14 @@ class MultiPlatformNotifier:
         # 根据事件类型添加特定字段
         if event_type in ['LoginSucc', 'LoginSucc2FA1', 'LoginFail', 'Logout']:
             content += '\n' + self._build_login_content(event_data)
-        elif event_type in ['SSH_SERVICE_STARTED', 'SSH_SERVICE_STOPPED', 'SSH_LISTEN', 'SSH_INVALID_USER', 'SSH_AUTH_FAILED',
-                            'SSH_LOGIN_SUCCESS', 'SSH_SESSION_OPENED', 'SSH_DISCONNECTED', 'SSH_SESSION_CLOSED']:
+        elif event_type in ['SSH_INVALID_USER', 'SSH_AUTH_FAILED', 'SSH_LOGIN_SUCCESS', 'SSH_DISCONNECTED']:
             content += '\n' + self._build_ssh_content(event_type, event_data)
         elif event_type == 'FoundDisk':
             content += '\n' + self._build_disk_content(event_data)
         elif event_type == 'APP_CRASH':
             content += '\n' + self._build_app_crash_content(event_data)
+        elif event_type in ('APP_STARTED', 'APP_STOPPED', 'APP_UPDATED', 'APP_INSTALLED', 'APP_AUTO_STARTED', 'APP_UNINSTALLED'):
+            content += '\n' + self._build_app_lifecycle_content(event_data)
         elif event_type == 'APP_UPDATE_FAILED':
             content += '\n' + self._build_app_update_failed_content(event_data)
         elif event_type == 'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION':
@@ -611,6 +609,10 @@ class MultiPlatformNotifier:
             content += '\n' + self._build_ups_onbatt_lowbatt_content(event_data)
         elif event_type == 'UPS_ONLINE':
             content += '\n' + self._build_ups_online_content(event_data)
+        elif event_type == 'UPS_ENABLE':
+            content += '\n' + self._build_ups_enable_disable_content('UPS_ENABLE', event_data)
+        elif event_type == 'UPS_DISABLE':
+            content += '\n' + self._build_ups_enable_disable_content('UPS_DISABLE', event_data)
         elif event_type == 'DiskWakeup':
             # 所有磁盘唤醒事件都使用合并样式
             if 'merged_disks' in event_data:
@@ -633,13 +635,13 @@ class MultiPlatformNotifier:
                     'count': 1
                 }
                 content += '\n' + self._build_merged_disk_spindown_content(single_disk_as_merged)
+        elif event_type == 'DISK_IO_ERR':
+            content += '\n' + self._build_disk_io_err_content(event_data)
         
-        # 添加备注
+        # 添加备注（去掉尾部多余换行，避免与备注之间出现空行）
         note = self.EVENT_NOTES.get(event_type, '')
-        # 统一格式：直接显示备注内容，不加前缀符号
         if note:
-            content += f"\n{note}"
-        
+            content = content.rstrip('\n') + f"\n{note}"
         return content
     
     def _build_login_content(self, event_data: Dict[str, Any]) -> str:
@@ -678,34 +680,27 @@ class MultiPlatformNotifier:
         
         return content
 
+    def _build_disk_io_err_content(self, event_data: Dict[str, Any]) -> str:
+        """构建磁盘IO错误事件内容（data: DEV, SN, MODEL, ERR_CNT）"""
+        content = ""
+        data = event_data.get('data', {})
+        dev = data.get('DEV', data.get('dev', ''))
+        sn = data.get('SN', data.get('sn', ''))
+        model = data.get('MODEL', data.get('model', ''))
+        err_cnt = data.get('ERR_CNT', data.get('err_cnt', 0))
+        if dev:
+            content += f"📛 设备: {dev}\n"
+        if model:
+            content += f"🔧 型号: {model}\n"
+        if sn:
+            content += f"🔢 序列号: {sn}\n"
+        content += f"⚠️ 错误次数: {err_cnt}\n"
+        return content
+
     def _build_ssh_content(self, event_type: str, event_data: Dict[str, Any]) -> str:
         """构建SSH相关事件内容"""
         content = ""
-        if event_type == 'SSH_SERVICE_STARTED':
-            content += "🔧 服务: ssh\n"
-        elif event_type == 'SSH_SERVICE_STOPPED':
-            content += "🔧 服务: ssh\n"
-        elif event_type == 'SSH_LISTEN':
-            if event_data.get('service_started'):
-                content += "🔧 服务: ssh\n"
-            listens = event_data.get('listens')
-            if listens:
-                seen = set()
-                for item in listens:
-                    address = item.get('address', '')
-                    port = item.get('port', '')
-                    key = f"{address}:{port}"
-                    if not address or not port or key in seen:
-                        continue
-                    seen.add(key)
-                    content += f"📡 监听地址: {address}\n"
-                    content += f"🔌 端口: {port}\n"
-            else:
-                address = event_data.get('address', '')
-                port = event_data.get('port', '')
-                content += f"📡 监听地址: {address}\n"
-                content += f"🔌 端口: {port}\n"
-        elif event_type == 'SSH_INVALID_USER':
+        if event_type == 'SSH_INVALID_USER':
             user = event_data.get('user', '')
             ip = event_data.get('IP', '')
             port = event_data.get('port', '')
@@ -734,9 +729,6 @@ class MultiPlatformNotifier:
             content += f"📍 IP地址: {ip}\n"
             if port:
                 content += f"🔌 端口: {port}\n"
-        elif event_type == 'SSH_SESSION_OPENED':
-            user = event_data.get('user', '')
-            content += f"👤 用户名: {user}\n"
         elif event_type == 'SSH_DISCONNECTED':
             user = event_data.get('user', '')
             ip = event_data.get('IP', '')
@@ -745,9 +737,6 @@ class MultiPlatformNotifier:
             content += f"📍 IP地址: {ip}\n"
             if port:
                 content += f"🔌 端口: {port}\n"
-        elif event_type == 'SSH_SESSION_CLOSED':
-            user = event_data.get('user', '')
-            content += f"👤 用户名: {user}\n"
         return content
     
     def _build_disk_wakeup_content(self, event_data: Dict[str, Any]) -> str:
@@ -816,6 +805,10 @@ class MultiPlatformNotifier:
         
         return content
     
+    def _build_app_lifecycle_content(self, event_data: Dict[str, Any]) -> str:
+        """构建应用生命周期事件内容（APP_STARTED/STOPPED/UPDATED 等，与 APP_CRASH 同结构）"""
+        return self._build_app_crash_content(event_data)
+
     def _build_app_crash_content(self, event_data: Dict[str, Any]) -> str:
         """构建应用崩溃事件内容"""
         content = ""
@@ -895,10 +888,20 @@ class MultiPlatformNotifier:
     def _build_ups_online_content(self, event_data: Dict[str, Any]) -> str:
         """构建UPS切换到市电供电事件内容"""
         content = ""
-        
+
         content += f"🔌 UPS状态: 切换到市电供电模式\n"
         content += f"✅ 电力供应恢复正常\n"
-        
+
+        return content
+
+    def _build_ups_enable_disable_content(self, event_type: str, event_data: Dict[str, Any]) -> str:
+        """构建开启/关闭 UPS 支持事件内容（parameter 含 data.USERNAME, from）"""
+        content = ""
+        data = event_data.get('data', {})
+        if username := data.get('USERNAME', ''):
+            content += f"👤 操作用户: {username}\n"
+        if from_src := event_data.get('from', ''):
+            content += f"📦 来源: {from_src}\n"
         return content
     
     def _build_system_content(self, event_type: str, event_data: Dict[str, Any], message: str) -> str:

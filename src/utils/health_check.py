@@ -47,8 +47,7 @@ class HealthChecker:
         self.last_check = current_time
         
         results = {
-            'journal_access': self.check_journal_access(),
-            'cursor_file': self.check_cursor_file(),
+            'cursor_dir': self.check_cursor_dir(),
             'log_directory': self.check_log_directory(),
             'webhook_url': self.check_webhook_url(),
             'python_process': self.check_python_process()
@@ -64,34 +63,18 @@ class HealthChecker:
         
         return results
     
-    def check_journal_access(self) -> bool:
-        """检查journalctl访问权限"""
+    def check_cursor_dir(self) -> bool:
+        """检查游标目录（数据库轮询游标写入）是否可写"""
+        cursor_dir = Path(self.config.cursor_dir)
         try:
-            result = subprocess.run(
-                ['sudo', 'journalctl', '--version'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            return result.returncode == 0
-        except Exception as e:
-            self.logger.error(f"journalctl访问检查失败: {e}")
-            return False
-    
-    def check_cursor_file(self) -> bool:
-        """检查游标文件"""
-        cursor_file = Path(self.config.cursor_dir) / "journal_cursor.txt"
-        
-        if cursor_file.exists():
-            try:
-                # 检查文件是否可读可写
-                cursor_file.read_text()
-                return True
-            except Exception:
-                return False
-        else:
-            # 文件不存在是正常的（首次运行）
+            cursor_dir.mkdir(parents=True, exist_ok=True)
+            test_file = cursor_dir / ".healthcheck_cursor"
+            test_file.write_text("ok")
+            test_file.unlink(missing_ok=True)
             return True
+        except Exception as e:
+            self.logger.error(f"游标目录检查失败: {e}")
+            return False
     
     def check_log_directory(self) -> bool:
         """检查日志目录"""
@@ -152,8 +135,7 @@ class HealthChecker:
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
             'checks': check_results,
             'all_healthy': all(check_results.get(k, False) for k in [
-                'journal_access', 'cursor_file', 'log_directory', 
-                'webhook_url', 'python_process'
+                'cursor_dir', 'log_directory', 'webhook_url', 'python_process'
             ]),
             'config': {
                 'monitor_events': len(self.config.monitor_events),

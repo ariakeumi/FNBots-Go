@@ -41,15 +41,10 @@ class EventProcessor:
             'LoginFail': self._handle_login_fail,
             'Logout': self._handle_logout,
             'FoundDisk': self._handle_found_disk,
-            'SSH_SERVICE_STARTED': self._handle_ssh_service_started,
-            'SSH_SERVICE_STOPPED': self._handle_ssh_service_stopped,
-            'SSH_LISTEN': self._handle_ssh_listen,
             'SSH_INVALID_USER': self._handle_ssh_invalid_user,
             'SSH_AUTH_FAILED': self._handle_ssh_auth_failed,
             'SSH_LOGIN_SUCCESS': self._handle_ssh_login_success,
-            'SSH_SESSION_OPENED': self._handle_ssh_session_opened,
             'SSH_DISCONNECTED': self._handle_ssh_disconnected,
-            'SSH_SESSION_CLOSED': self._handle_ssh_session_closed,
             'APP_CRASH': self._handle_app_crash,
             'APP_UPDATE_FAILED': self._handle_app_update_failed,
             'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': self._handle_app_start_failed_local,
@@ -59,8 +54,18 @@ class EventProcessor:
             'UPS_ONBATT': self._handle_ups_onbatt,
             'UPS_ONBATT_LOWBATT': self._handle_ups_onbatt_lowbatt,
             'UPS_ONLINE': self._handle_ups_online,
+            'UPS_ENABLE': self._handle_ups_enable,
+            'UPS_DISABLE': self._handle_ups_disable,
             'DiskWakeup': self._handle_disk_wakeup,
-            'DiskSpindown': self._handle_disk_spindown
+            'DiskSpindown': self._handle_disk_spindown,
+            # 数据库 log 表应用生命周期事件
+            'APP_STARTED': lambda ed, e: self._handle_app_lifecycle('APP_STARTED', ed, e),
+            'APP_STOPPED': lambda ed, e: self._handle_app_lifecycle('APP_STOPPED', ed, e),
+            'APP_UPDATED': lambda ed, e: self._handle_app_lifecycle('APP_UPDATED', ed, e),
+            'APP_INSTALLED': lambda ed, e: self._handle_app_lifecycle('APP_INSTALLED', ed, e),
+            'APP_AUTO_STARTED': lambda ed, e: self._handle_app_lifecycle('APP_AUTO_STARTED', ed, e),
+            'APP_UNINSTALLED': lambda ed, e: self._handle_app_lifecycle('APP_UNINSTALLED', ed, e),
+            'DISK_IO_ERR': self._handle_disk_io_err,
         }
         
         # 磁盘事件合并缓存
@@ -119,7 +124,7 @@ class EventProcessor:
         timer.start()
     
     def _store_notification_log(self, event_type: str, event_data: Dict[str, Any], 
-                               raw_log: str, entry: JournalEntry, source: str = "journal"):
+                               raw_log: str, entry: JournalEntry, source: str = "db"):
         """
         存储通知日志
         
@@ -187,7 +192,7 @@ class EventProcessor:
             event_data=event_data,
             raw_log=raw_log,
             entry=entry,
-            source='journal'
+            source='db'
         )
     
     def _handle_login_2fa(self, event_data: Dict[str, Any], entry: JournalEntry):
@@ -265,89 +270,6 @@ class EventProcessor:
             timestamp=timestamp
         )
 
-    def _handle_ssh_service_started(self, event_data: Dict[str, Any], entry: JournalEntry):
-        """处理SSH服务启动事件"""
-        # 若近期有监听事件，优先合并为一条
-        pending_listen = self.ssh_pending.pop('ssh_listen_group', None)
-        if pending_listen:
-            pending_listen['timer'].cancel()
-            merged_data = dict(pending_listen['event_data'])
-            merged_data['service_started'] = True
-            self.logger.info("SSH服务启动(已合并监听)")
-            self._send_ssh_notification('SSH_LISTEN', merged_data, pending_listen['entry'])
-            return
-        self._schedule_ssh_event(
-            key='ssh_service_started',
-            event_type='SSH_SERVICE_STARTED',
-            event_data=event_data,
-            entry=entry,
-            log_message="SSH服务启动"
-        )
-
-    def _handle_ssh_listen(self, event_data: Dict[str, Any], entry: JournalEntry):
-        """处理SSH监听端口事件"""
-        pending_started = self.ssh_pending.pop('ssh_service_started', None)
-        if pending_started:
-            pending_started['timer'].cancel()
-            # 等待合并窗口，把所有监听合成一条再发
-            pending_listen = self.ssh_pending.pop('ssh_listen_group', None)
-            listens = []
-            if pending_listen:
-                pending_listen['timer'].cancel()
-                listens = list(pending_listen['event_data'].get('listens', []))
-            listens.append(event_data)
-            address = event_data.get('address', '')
-            port = event_data.get('port', '')
-            self._schedule_ssh_event(
-                key='ssh_listen_group',
-                event_type='SSH_LISTEN',
-                event_data={'listens': listens, 'service_started': True},
-                entry=entry,
-                log_message=f"SSH服务启动+监听合并(聚合): {address}:{port}"
-            )
-            return
-
-        # 合并多个监听事件为一条（IPv4/IPv6）
-        pending_listen = self.ssh_pending.pop('ssh_listen_group', None)
-        listens = []
-        if pending_listen:
-            pending_listen['timer'].cancel()
-            listens = list(pending_listen['event_data'].get('listens', []))
-        listens.append(event_data)
-        # 去重并过滤空监听
-        uniq_listens = []
-        seen = set()
-        for item in listens:
-            addr = item.get('address', '')
-            port = item.get('port', '')
-            if not addr or not port:
-                continue
-            key = f"{addr}:{port}"
-            if key in seen:
-                continue
-            seen.add(key)
-            uniq_listens.append(item)
-        address = event_data.get('address', '')
-        port = event_data.get('port', '')
-        self._schedule_ssh_event(
-            key='ssh_listen_group',
-            event_type='SSH_LISTEN',
-            event_data={'listens': uniq_listens},
-            entry=entry,
-            log_message=f"SSH监听端口(合并): {address}:{port}"
-        )
-
-    def _handle_ssh_service_stopped(self, event_data: Dict[str, Any], entry: JournalEntry):
-        """处理SSH服务停止事件"""
-        # 短窗口合并 stop/deactivated 重复日志
-        self._schedule_ssh_event(
-            key='ssh_service_stopped',
-            event_type='SSH_SERVICE_STOPPED',
-            event_data=event_data,
-            entry=entry,
-            log_message="SSH服务停止"
-        )
-
     def _handle_ssh_invalid_user(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理SSH无效用户尝试事件"""
         user = event_data.get('user', 'unknown')
@@ -399,14 +321,6 @@ class EventProcessor:
         user = event_data.get('user', 'unknown')
         ip = event_data.get('IP', 'unknown')
         key_suffix = user
-        pending_open = self.ssh_pending.pop(f"ssh_session_opened:{key_suffix}", None)
-        if pending_open:
-            pending_open['timer'].cancel()
-            merged_data = dict(event_data)
-            merged_data['session_opened'] = True
-            self.logger.info(f"SSH登录成功(已合并会话开启): {user}@{ip}")
-            self._send_ssh_notification('SSH_LOGIN_SUCCESS', merged_data, entry)
-            return
         self._schedule_ssh_event(
             key=f"ssh_login_success:{key_suffix}",
             event_type='SSH_LOGIN_SUCCESS',
@@ -415,41 +329,11 @@ class EventProcessor:
             log_message=f"SSH登录成功: {user}@{ip}"
         )
 
-    def _handle_ssh_session_opened(self, event_data: Dict[str, Any], entry: JournalEntry):
-        """处理SSH会话开启事件"""
-        user = event_data.get('user', 'unknown')
-        key_suffix = user
-        pending_login = self.ssh_pending.pop(f"ssh_login_success:{key_suffix}", None)
-        if pending_login:
-            pending_login['timer'].cancel()
-            merged_data = dict(pending_login['event_data'])
-            merged_data['session_opened'] = True
-            login_user = merged_data.get('user', 'unknown')
-            login_ip = merged_data.get('IP', 'unknown')
-            self.logger.info(f"SSH登录成功(已合并会话开启): {login_user}@{login_ip}")
-            self._send_ssh_notification('SSH_LOGIN_SUCCESS', merged_data, pending_login['entry'])
-            return
-        self._schedule_ssh_event(
-            key=f"ssh_session_opened:{key_suffix}",
-            event_type='SSH_SESSION_OPENED',
-            event_data=event_data,
-            entry=entry,
-            log_message=f"SSH会话开启: {user}"
-        )
-
     def _handle_ssh_disconnected(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理SSH断开连接事件"""
         user = event_data.get('user', 'unknown')
         ip = event_data.get('IP', 'unknown')
         key_suffix = user
-        pending_closed = self.ssh_pending.pop(f"ssh_session_closed:{key_suffix}", None)
-        if pending_closed:
-            pending_closed['timer'].cancel()
-            merged_data = dict(event_data)
-            merged_data['session_closed'] = True
-            self.logger.info(f"SSH断开连接(已合并会话关闭): {user}@{ip}")
-            self._send_ssh_notification('SSH_DISCONNECTED', merged_data, entry)
-            return
         self._schedule_ssh_event(
             key=f"ssh_disconnected:{key_suffix}",
             event_type='SSH_DISCONNECTED',
@@ -458,28 +342,6 @@ class EventProcessor:
             log_message=f"SSH断开连接: {user}@{ip}"
         )
 
-    def _handle_ssh_session_closed(self, event_data: Dict[str, Any], entry: JournalEntry):
-        """处理SSH会话关闭事件"""
-        user = event_data.get('user', 'unknown')
-        key_suffix = user
-        pending_disconnected = self.ssh_pending.pop(f"ssh_disconnected:{key_suffix}", None)
-        if pending_disconnected:
-            pending_disconnected['timer'].cancel()
-            merged_data = dict(pending_disconnected['event_data'])
-            merged_data['session_closed'] = True
-            disc_user = merged_data.get('user', 'unknown')
-            disc_ip = merged_data.get('IP', 'unknown')
-            self.logger.info(f"SSH断开连接(已合并会话关闭): {disc_user}@{disc_ip}")
-            self._send_ssh_notification('SSH_DISCONNECTED', merged_data, pending_disconnected['entry'])
-            return
-        self._schedule_ssh_event(
-            key=f"ssh_session_closed:{key_suffix}",
-            event_type='SSH_SESSION_CLOSED',
-            event_data=event_data,
-            entry=entry,
-            log_message=f"SSH会话关闭: {user}"
-        )
-    
     def _handle_app_crash(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理应用崩溃事件"""
         data = event_data.get('data', {})
@@ -549,6 +411,37 @@ class EventProcessor:
             raw_log=raw_log,
             timestamp=timestamp
         )
+
+    def _handle_app_lifecycle(self, event_type: str, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理应用生命周期事件（APP_STARTED/STOPPED/UPDATED/INSTALLED/AUTO_STARTED/UNINSTALLED，来自数据库）"""
+        data = event_data.get('data', {})
+        display_name = data.get('DISPLAY_NAME', data.get('APP_NAME', '未知应用'))
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.info(f"应用生命周期: {event_type} - {display_name}")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type=event_type,
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+        self._store_notification_log(event_type, event_data, raw_log, entry, source='db')
+
+    def _handle_disk_io_err(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理磁盘IO错误事件（data: DEV, SN, MODEL, ERR_CNT）"""
+        data = event_data.get('data', {})
+        dev = data.get('DEV', data.get('dev', ''))
+        err_cnt = data.get('ERR_CNT', data.get('err_cnt', 0))
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.warning(f"磁盘IO错误: {dev}, 错误次数 {err_cnt}")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type='DISK_IO_ERR',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+        self._store_notification_log('DISK_IO_ERR', event_data, raw_log, entry, source='db')
 
     def _handle_cpu_usage_alarm(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理 CPU 使用率告警"""
@@ -630,6 +523,30 @@ class EventProcessor:
         
         self.notifier.send_notification(
             event_type='UPS_ONLINE',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+
+    def _handle_ups_enable(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理开启 UPS 支持事件"""
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.info("UPS 支持已开启")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type='UPS_ENABLE',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+
+    def _handle_ups_disable(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理关闭 UPS 支持事件"""
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.info("UPS 支持已关闭")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type='UPS_DISABLE',
             event_data=event_data,
             raw_log=raw_log,
             timestamp=timestamp

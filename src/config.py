@@ -24,9 +24,11 @@ class Config:
         "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
         "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
         "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+        "UPS_ENABLE", "UPS_DISABLE",
         "DiskWakeup", "DiskSpindown",
-        "SSH_SERVICE_STARTED", "SSH_SERVICE_STOPPED", "SSH_LISTEN", "SSH_INVALID_USER", "SSH_AUTH_FAILED",
-        "SSH_LOGIN_SUCCESS", "SSH_SESSION_OPENED", "SSH_DISCONNECTED", "SSH_SESSION_CLOSED"
+        "SSH_INVALID_USER", "SSH_AUTH_FAILED",
+        "SSH_LOGIN_SUCCESS", "SSH_DISCONNECTED",
+        "DISK_IO_ERR"
     ])
     
     # 日志配置
@@ -41,18 +43,12 @@ class Config:
     dedup_window: int = 300
     
     # 系统路径配置
-    journal_paths: List[str] = field(default_factory=lambda: [
-        "./test_logs/journal",  # 用于测试
-        "/var/log/journal",
-        "/run/log/journal"
-    ])
-    cursor_dir: str = "./data/cursor"  # 统一使用data目录下的cursor
-    eventlogger_log_path: str = "/usr/trim/logs/eventlogger_service.log"
+    cursor_dir: str = "./data/cursor"  # 数据库轮询游标等
+    logger_db_path: str = "/usr/trim/var/eventlogger_service/logger_data.db3"
+    logger_poll_interval: int = 3  # 秒，不宜过小以免频繁读库
     
     # 高级配置
-    heartbeat_interval: int = 180  #3分钟
-    file_check_interval: int = 240 #4分钟
-    max_log_age: int = 7
+    max_log_age: int = 7  # 应用运行日志 monitor_*.log 保留天数
     notification_restart_enabled: bool = True
     notification_restart_consecutive_failures: int = 10
     notification_restart_window: int = 1800  # 30分钟
@@ -149,15 +145,15 @@ class Config:
             self.dedup_window = int(dedup_window)
             self._env_set_keys.add('dedup_window')
 
+        # 数据库日志监控
+        if db_path := os.getenv('LOGGER_DB_PATH'):
+            self.logger_db_path = db_path
+            self._env_set_keys.add('logger_db_path')
+        if poll_interval := os.getenv('LOGGER_POLL_INTERVAL'):
+            self.logger_poll_interval = int(poll_interval)
+            self._env_set_keys.add('logger_poll_interval')
+
         # 高级配置
-        if heartbeat := os.getenv('HEARTBEAT_INTERVAL'):
-            self.heartbeat_interval = int(heartbeat)
-            self._env_set_keys.add('heartbeat_interval')
-
-        if file_check := os.getenv('FILE_CHECK_INTERVAL'):
-            self.file_check_interval = int(file_check)
-            self._env_set_keys.add('file_check_interval')
-
         if max_age := os.getenv('MAX_LOG_AGE'):
             self.max_log_age = int(max_age)
             self._env_set_keys.add('max_log_age')
@@ -204,14 +200,17 @@ class Config:
         if not self.monitor_events:
             raise ValueError("必须配置至少一个监控事件")
         
-        # 验证事件类型
+        # 验证事件类型（含数据库 log 表 eventId 对应的项目类型）
         valid_events = {"LoginSucc", "LoginSucc2FA1", "LoginFail", "Logout", "FoundDisk", "APP_CRASH",
                         "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
                         "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
                         "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+                        "UPS_ENABLE", "UPS_DISABLE",
                         "DiskWakeup", "DiskSpindown",
-                        "SSH_SERVICE_STARTED", "SSH_SERVICE_STOPPED", "SSH_LISTEN", "SSH_INVALID_USER", "SSH_AUTH_FAILED",
-                        "SSH_LOGIN_SUCCESS", "SSH_SESSION_OPENED", "SSH_DISCONNECTED", "SSH_SESSION_CLOSED"}
+                        "SSH_INVALID_USER", "SSH_AUTH_FAILED",
+                        "SSH_LOGIN_SUCCESS", "SSH_DISCONNECTED",
+                        "APP_STARTED", "APP_STOPPED", "APP_UPDATED", "APP_INSTALLED", "APP_AUTO_STARTED", "APP_UNINSTALLED",
+                        "DISK_IO_ERR"}
         for event in self.monitor_events:
             if event not in valid_events:
                 raise ValueError(f"未知事件类型: {event}")
