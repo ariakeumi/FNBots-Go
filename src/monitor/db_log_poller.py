@@ -127,6 +127,25 @@ class DBLogPoller:
         self.event_handlers[event_type] = handler
         self.logger.info("注册事件处理器: %s", event_type)
 
+    def clear_handlers(self) -> None:
+        """清空已注册的事件处理器（热加载配置前调用）。"""
+        self.event_handlers.clear()
+
+    def update_config(
+        self,
+        monitor_events: Optional[List[str]] = None,
+        poll_interval: Optional[int] = None,
+        db_path: Optional[str] = None,
+    ) -> None:
+        """热加载时更新监控事件、轮询间隔、数据库路径。"""
+        if monitor_events is not None:
+            self.monitor_events = set(monitor_events)
+        if poll_interval is not None:
+            self.poll_interval = max(1, poll_interval)
+        if db_path is not None:
+            self.db_path = db_path
+        self.logger.info("DBLogPoller 配置已更新: events=%s, interval=%s, db=%s", len(self.monitor_events), self.poll_interval, self.db_path)
+
     def _read_last_id(self) -> int:
         try:
             if self._cursor_file.exists():

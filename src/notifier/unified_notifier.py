@@ -1,11 +1,15 @@
 """
 统一通知器
 根据配置决定使用企业微信webhook、钉钉或飞书进行消息推送
+支持勿扰模式：时段内缓冲事件，结束后汇总为一条推送
 """
 
 import logging
-from typing import Dict, Any
+from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Dict, Any, List
+from zoneinfo import ZoneInfo
 
 from .multi_platform_notifier import MultiPlatformNotifier
 
@@ -30,7 +34,9 @@ class UnifiedNotifier:
         """
         self.config = config
         self.logger = logging.getLogger(__name__)
-        
+        # 勿扰模式缓冲：{event_type, timestamp, event_data}
+        self._dnd_buffer: List[Dict[str, Any]] = []
+
         # 根据配置初始化多平台通知器
         self.multi_platform_notifier = MultiPlatformNotifier(
             wechat_webhook_url=config.wechat_webhook_url,
@@ -43,7 +49,91 @@ class UnifiedNotifier:
             timeout=config.http_timeout
         )
         self.logger.info("多平台通知器已初始化")
-    
+
+    def reload_config(self):
+        """按当前 self.config 重新创建多平台通知器（保存配置后热加载用）。"""
+        old = self.multi_platform_notifier
+        self.multi_platform_notifier = MultiPlatformNotifier(
+            wechat_webhook_url=self.config.wechat_webhook_url,
+            dingtalk_webhook_url=self.config.dingtalk_webhook_url,
+            feishu_webhook_url=self.config.feishu_webhook_url,
+            bark_url=self.config.bark_url,
+            dedup_window=self.config.dedup_window,
+            pool_size=self.config.http_pool_size,
+            retries=self.config.http_retry_count,
+            timeout=self.config.http_timeout,
+        )
+        if old:
+            try:
+                old.close()
+            except Exception as e:
+                self.logger.warning("关闭旧通知器失败: %s", e)
+        self.logger.info("多平台通知器已热加载配置")
+
+    def _dnd_minutes_since_midnight(self, time_str: str) -> int:
+        """将 HH:MM 转为当日 0 点起的分钟数。"""
+        try:
+            parts = time_str.strip().split(":")
+            h, m = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+            return max(0, min(24 * 60 - 1, h * 60 + m))
+        except (ValueError, IndexError):
+            return 0
+
+    def _in_dnd_window(self) -> bool:
+        """当前时间是否在勿扰时段内（使用 Asia/Shanghai）。"""
+        enabled = getattr(self.config, "dnd_enabled", False)
+        if not enabled:
+            return False
+        start_s = getattr(self.config, "dnd_start_time", "22:00") or "22:00"
+        end_s = getattr(self.config, "dnd_end_time", "07:00") or "07:00"
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        current = now.hour * 60 + now.minute
+        start_m = self._dnd_minutes_since_midnight(start_s)
+        end_m = self._dnd_minutes_since_midnight(end_s)
+        if end_m <= start_m:
+            return current >= start_m or current < end_m
+        return start_m <= current < end_m
+
+    def _build_dnd_summary_and_clear(self) -> str:
+        """将缓冲按事件类型统计，生成汇总文案并清空缓冲。"""
+        if not self._dnd_buffer:
+            return ""
+        start_s = getattr(self.config, "dnd_start_time", "22:00") or "22:00"
+        end_s = getattr(self.config, "dnd_end_time", "07:00") or "07:00"
+        by_type = defaultdict(int)
+        for item in self._dnd_buffer:
+            by_type[item.get("event_type", "unknown")] += 1
+        buf_count = len(self._dnd_buffer)
+        self._dnd_buffer.clear()
+        titles = MultiPlatformNotifier.EVENT_TITLES
+        lines = [f"【勿扰时段汇总】{start_s} - {end_s}"]
+        for event_type in sorted(by_type.keys()):
+            count = by_type[event_type]
+            label = titles.get(event_type, event_type)
+            if "飞牛NAS-" in label:
+                label = label.split("飞牛NAS-", 1)[-1].strip()
+            lines.append(f"· {label} {count} 次")
+        self.logger.info("勿扰结束，发送汇总消息（共 %s 条事件）", buf_count)
+        return "\n".join(lines)
+
+    def flush_dnd_buffer_if_needed(self) -> None:
+        """若当前不在勿扰时段且缓冲非空，则汇总为一条消息推送并清空缓冲。"""
+        if self._in_dnd_window():
+            return
+        if not self._dnd_buffer:
+            return
+        summary = self._build_dnd_summary_and_clear()
+        if not summary:
+            return
+        try:
+            self.multi_platform_notifier.send_system_notification(
+                "DND_SUMMARY",
+                summary,
+                {"hostname": "", "version": ""},
+            )
+        except Exception as e:
+            self.logger.warning("勿扰汇总推送失败: %s", e)
+
     def send_notification(self, 
                          event_type: str,
                          event_data: Dict[str, Any],
@@ -61,6 +151,17 @@ class UnifiedNotifier:
         Returns:
             通知发送结果
         """
+        if self._in_dnd_window():
+            self._dnd_buffer.append({
+                "event_type": event_type,
+                "timestamp": timestamp,
+                "event_data": event_data,
+            })
+            return NotificationResult(
+                success=True,
+                method="dnd_buffered",
+                details={"event_type": event_type, "buffered": True},
+            )
         # 通过多平台通知器发送
         success = self.multi_platform_notifier.send_notification(
             event_type, event_data, raw_log, timestamp
@@ -108,6 +209,12 @@ class UnifiedNotifier:
         Returns:
             通知发送结果
         """
+        if self._in_dnd_window():
+            return NotificationResult(
+                success=True,
+                method="dnd_skipped",
+                details={"event_type": event_type, "message": message[:50]},
+            )
         # 通过多平台通知器发送系统通知
         success = self.multi_platform_notifier.send_system_notification(
             event_type, message, additional_info

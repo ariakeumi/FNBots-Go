@@ -649,12 +649,23 @@ class EventProcessor:
         cache_list.clear()
 
     def _extract_disk_details(self, event_data: Dict[str, Any]) -> List[Dict[str, str]]:
-        """从事件数据中提取磁盘信息"""
+        """从事件数据中提取磁盘信息。支持飞牛 NAS 的顶层格式：{"template":"DiskSpindown","disk":"sdb","model":"...","serial":"..."}"""
         details = []
 
         def add_candidate(source):
             if isinstance(source, dict):
                 details.append(source)
+
+        # 飞牛 NAS：parameter 顶层即为 disk/model/serial，无 data 嵌套
+        disk = self._pick_disk_field(event_data)
+        model = self._pick_field(event_data, [
+            'model', 'MODEL', 'disk_model', 'diskModel', 'modelName', 'model_name', 'Model'
+        ])
+        serial = self._pick_field(event_data, [
+            'serial', 'SERIAL', 'sn', 'SN', 'serial_number', 'serialNumber', 'SerialNumber'
+        ])
+        if disk or model or serial:
+            return [{'disk': disk, 'model': model, 'serial': serial}]
 
         data_section = event_data.get('data')
         add_candidate(event_data)
@@ -682,17 +693,38 @@ class EventProcessor:
         for candidate in details:
             normalized_entry = {
                 'disk': self._pick_disk_field(candidate),
-                'model': self._pick_field(candidate, ['model', 'MODEL', 'disk_model', 'diskModel']),
-                'serial': self._pick_field(candidate, ['serial', 'SERIAL', 'sn', 'SN', 'serial_number', 'serialNumber'])
+                'model': self._pick_field(candidate, [
+                    'model', 'MODEL', 'disk_model', 'diskModel', 'modelName', 'model_name', 'Model'
+                ]),
+                'serial': self._pick_field(candidate, [
+                    'serial', 'SERIAL', 'sn', 'SN', 'serial_number', 'serialNumber', 'SerialNumber'
+                ])
             }
             if any(normalized_entry.values()):
                 normalized.append(normalized_entry)
+
+        # 若未从列表/嵌套结构解析出任何磁盘，尝试把 event_data 或 data 当作单条磁盘信息再解析一次
+        if not normalized:
+            for single in [event_data, event_data.get('data') or {}]:
+                if not isinstance(single, dict) or single in details:
+                    continue
+                disk = self._pick_disk_field(single)
+                model = self._pick_field(single, [
+                    'model', 'MODEL', 'disk_model', 'diskModel', 'modelName', 'model_name', 'Model'
+                ])
+                serial = self._pick_field(single, [
+                    'serial', 'SERIAL', 'sn', 'SN', 'serial_number', 'serialNumber', 'SerialNumber'
+                ])
+                if disk or model or serial:
+                    normalized.append({'disk': disk, 'model': model, 'serial': serial})
+                    break
 
         return normalized
 
     def _pick_disk_field(self, candidate: Dict[str, Any]) -> str:
         disk = self._pick_field(candidate, [
-            'disk', 'device', 'path', 'name', 'disk_name', 'diskName', 'DEVICE', 'DISK'
+            'disk', 'device', 'path', 'name', 'disk_name', 'diskName', 'DEVICE', 'DISK',
+            'deviceName', 'device_name', 'devicePath', 'device_path', 'dev', 'DEV'
         ])
         if disk:
             return disk

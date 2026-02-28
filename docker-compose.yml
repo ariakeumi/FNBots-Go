@@ -3,8 +3,9 @@ services:
     build: .
     container_name: fn-message-bots
     restart: unless-stopped
-    network_mode: host
-
+    # Web UI 端口映射（左侧为宿主机端口，可按需修改）
+    ports:
+      - "18080:18080"
     volumes:
       # 应用数据：运行日志与轮询游标（与 config 中 log_dir、cursor_dir 对应）
       - ./data/logs:/app/data/logs:rw
@@ -12,7 +13,8 @@ services:
       # eventlogger 数据库（只读），供轮询 log 表
       - /usr/trim/var/eventlogger_service:/usr/trim/var/eventlogger_service:ro
       # 配置文件
-      - ./config:/app/config:ro
+      # 配置文件：需要可写以支持 Web UI 保存
+      - ./config:/app/config:rw
 
     environment:
       - WECHAT_WEBHOOK_URL=${WECHAT_WEBHOOK_URL}

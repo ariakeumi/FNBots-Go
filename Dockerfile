@@ -32,7 +32,8 @@ COPY --chmod=755 healthcheck.sh /app/healthcheck.sh
 # 应用写入的目录（与 config 中 log_dir、cursor_dir 一致）
 RUN mkdir -p /app/data/logs /app/data/cursor
 
-
+# 暴露 Web UI 端口（用于配置页面）
+EXPOSE 18080
 
 # 容器入口点
 ENTRYPOINT ["python", "-u", "src/main.py"]

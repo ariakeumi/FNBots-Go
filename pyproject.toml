@@ -1,0 +1,19 @@
+[project]
+name = "fnmessagebots"
+version = "0.1.0"
+description = "FN Message Bots"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31.0",
+    "urllib3>=1.26.0",
+    "python-dateutil>=2.8.2",
+    "psutil>=5.9.0",
+    "Flask>=3.0.0",
+]
+
+[tool.basedpyright]
+# 使用项目根目录下的 .venv，便于解析 flask 等第三方导入
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.9"

@@ -87,6 +87,8 @@ class MultiPlatformNotifier:
         'APP_AUTO_STARTED': '▶️ 飞牛NAS-应用已自启动',
         'APP_UNINSTALLED': '🗑️ 飞牛NAS-应用已卸载',
         'DISK_IO_ERR': '⚠️ 飞牛NAS-磁盘IO错误告警',
+        'TEST_PUSH': '🧪 飞牛NAS-测试推送',
+        'DND_SUMMARY': '📋 飞牛NAS-勿扰时段汇总',
     }
     
     # Bark事件标题映射 - 用于Bark推送，标题统一为"飞牛NAS通知"
@@ -122,6 +124,8 @@ class MultiPlatformNotifier:
         'APP_AUTO_STARTED': '应用{name}已自启动',
         'APP_UNINSTALLED': '应用{name}已卸载',
         'DISK_IO_ERR': '磁盘{dev}发生IO错误，错误次数{err_cnt}',
+        'TEST_PUSH': '测试推送',
+        'DND_SUMMARY': '勿扰时段事件汇总',
     }
     
     # 事件备注
@@ -157,6 +161,7 @@ class MultiPlatformNotifier:
         'APP_AUTO_STARTED': '▶️ 应用已随系统自启动。',
         'APP_UNINSTALLED': '🗑️ 应用已卸载。',
         'DISK_IO_ERR': '⚠️ 磁盘发生IO错误，请检查硬盘健康与连接。',
+        'TEST_PUSH': '🧪 Web 配置页发送的测试消息。',
     }
     
     def __init__(self, 
@@ -321,7 +326,7 @@ class MultiPlatformNotifier:
         }
         
         # 构建消息
-        title = self.EVENT_TITLES.get(event_type, f"📋 系统事件: {event_type}")
+        title = self.EVENT_TITLES.get(event_type, f"📋 飞牛NAS-系统事件: {event_type}")
         content = self._build_content(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
         message = MultiPlatformMessage(title=title, content=content)
         
@@ -453,38 +458,67 @@ class MultiPlatformNotifier:
         self.logger.debug(f"磁盘事件已加入合并队列: {event_type} -> 窗口 {current_window}")
         return True
     
+    def _iter_urls(self, raw: str):
+        """将配置的URL拆分为列表，支持使用 '|' 分隔配置多个地址。"""
+        if not raw:
+            return []
+        return [u.strip() for u in str(raw).split('|') if u.strip()]
+
     def _send_to_wechat(self, message: MultiPlatformMessage) -> bool:
-        """发送到企业微信"""
+        """发送到企业微信，支持同一渠道多个Webhook地址"""
         payload = message.to_wechat_format()
-        result = self.connection_pool.post(self.wechat_webhook_url, payload)
-        return result is not None
+        urls = self._iter_urls(self.wechat_webhook_url)
+        any_success = False
+        for url in urls:
+            result = self.connection_pool.post(url, payload)
+            if result is not None:
+                any_success = True
+        return any_success
     
     def _send_to_dingtalk(self, message: MultiPlatformMessage) -> bool:
-        """发送到钉钉"""
+        """发送到钉钉，支持同一渠道多个Webhook地址"""
         payload = message.to_dingtalk_format()
-        result = self.connection_pool.post(self.dingtalk_webhook_url, payload)
-        return result is not None
+        urls = self._iter_urls(self.dingtalk_webhook_url)
+        any_success = False
+        for url in urls:
+            result = self.connection_pool.post(url, payload)
+            if result is not None:
+                any_success = True
+        return any_success
     
     def _send_to_feishu(self, message: MultiPlatformMessage) -> bool:
-        """发送到飞书"""
+        """发送到飞书，支持同一渠道多个Webhook地址"""
         payload = message.to_feishu_format()
-        result = self.connection_pool.post(self.feishu_webhook_url, payload)
-        return result is not None
+        urls = self._iter_urls(self.feishu_webhook_url)
+        any_success = False
+        for url in urls:
+            result = self.connection_pool.post(url, payload)
+            if result is not None:
+                any_success = True
+        return any_success
     
     def _send_to_bark(self, message: MultiPlatformMessage) -> bool:
-        """发送到Bark，支持 {content} 占位符或直连URL"""
-        encoded_content = urllib.parse.quote(message.content, safe='')
+        """发送到Bark，支持 {content} 占位符、直连URL，以及同一渠道多个地址"""
+        urls = self._iter_urls(self.bark_url)
+        if not urls:
+            return False
 
-        if '{content}' in self.bark_url:
-            # 仅替换内容占位符，不改动用户参数，也不添加 title
-            bark_push_url = self.bark_url.replace('{content}', encoded_content)
-        else:
-            # 直连URL：拼接 /飞牛NAS通知/内容
-            encoded_title = urllib.parse.quote(message.title, safe='')
-            bark_push_url = f"{self.bark_url.rstrip('/')}/{encoded_title}/{encoded_content}"
-        
-        result = self.connection_pool.get(bark_push_url)
-        return result
+        encoded_content = urllib.parse.quote(message.content, safe='')
+        encoded_title = urllib.parse.quote(message.title, safe='')
+
+        any_success = False
+        for raw_url in urls:
+            if '{content}' in raw_url:
+                # 仅替换内容占位符，不改动用户参数，也不添加 title
+                bark_push_url = raw_url.replace('{content}', encoded_content)
+            else:
+                # 直连URL：拼接 /飞牛NAS通知/内容
+                bark_push_url = f"{raw_url.rstrip('/')}/{encoded_title}/{encoded_content}"
+            
+            result = self.connection_pool.get(bark_push_url)
+            if result:
+                any_success = True
+        return any_success
     
     def _generate_fingerprint(self, event_type: str, event_data: Dict[str, Any]) -> str:
         """生成事件指纹（用于去重）"""
@@ -572,7 +606,7 @@ class MultiPlatformNotifier:
                       timestamp: str, raw_log: str) -> MultiPlatformMessage:
         """构建多平台消息"""
         
-        title = self.EVENT_TITLES.get(event_type, f"📋 系统事件: {event_type}")
+        title = self.EVENT_TITLES.get(event_type, f"📋 飞牛NAS-系统事件: {event_type}")
         content = self._build_content(event_type, event_data, timestamp, raw_log)
         
         return MultiPlatformMessage(title=title, content=content)
@@ -769,6 +803,38 @@ class MultiPlatformNotifier:
         
         return content
     
+    def _format_disk_fallback(self, disk_info: Dict[str, Any]) -> str:
+        """当 disk/model/serial 都为空时，从 full_event_data 或 data 中拼一条可读摘要"""
+        raw = disk_info.get('full_event_data') or disk_info.get('data')
+        if not isinstance(raw, dict):
+            return ""
+        # 优先从 data 子段取
+        data = raw.get('data') if isinstance(raw.get('data'), dict) else raw
+        parts = []
+        for key in ('disk', 'device', 'path', 'name', 'DEVICE', 'DISK', 'deviceName', 'dev'):
+            if key in data and data[key]:
+                v = data[key]
+                if isinstance(v, dict):
+                    v = v.get('path') or v.get('device') or v.get('name') or str(v)[:80]
+                parts.append(f"设备: {v}")
+                break
+        for key in ('model', 'MODEL', 'modelName'):
+            if key in data and data[key]:
+                parts.append(f"型号: {data[key]}")
+                break
+        for key in ('serial', 'SERIAL', 'sn', 'SN', 'serialNumber'):
+            if key in data and data[key]:
+                parts.append(f"序列号: {data[key]}")
+                break
+        if parts:
+            return " ".join(parts)
+        # 无标准字段时，列出 data 中部分键值便于排查
+        skip = {'raw', 'datetime', 'eventId', 'level', 'from'}
+        extra = [f"{k}: {v}" for k, v in list(data.items())[:5] if k not in skip and v]
+        if extra:
+            return "原始: " + ", ".join(extra)[:120]
+        return ""
+
     def _build_merged_disk_wakeup_content(self, event_data: Dict[str, Any]) -> str:
         """构建合并磁盘唤醒事件内容"""
         content = ""
@@ -776,13 +842,23 @@ class MultiPlatformNotifier:
         merged_disks = event_data.get('merged_disks', [])
         for i, disk_info in enumerate(merged_disks, 1):
             content += f"磁盘 #{i}:\n"
-            if disk := disk_info.get('disk', ''):
+            disk = disk_info.get('disk', '') or ''
+            model = disk_info.get('model', '') or ''
+            serial = disk_info.get('serial', '') or ''
+            if disk:
                 content += f"  📛 磁盘设备: {disk}\n"
-            if model := disk_info.get('model', ''):
+            if model:
                 content += f"  🔧 硬盘型号: {model}\n"
-            if serial := disk_info.get('serial', ''):
+            if serial:
                 content += f"  🔢 序列号: {serial}\n"
-            if i < len(merged_disks):  # 只在不是最后一个磁盘时添加空行
+            if not (disk or model or serial):
+                # 未解析到具体字段时，尝试从 full_event_data / data 中取可读信息
+                fallback = self._format_disk_fallback(disk_info)
+                if fallback:
+                    content += f"  {fallback}\n"
+                else:
+                    content += "  （未解析到磁盘详情，请查看系统日志）\n"
+            if i < len(merged_disks):
                 content += "\n"
         
         return content
@@ -794,13 +870,22 @@ class MultiPlatformNotifier:
         merged_disks = event_data.get('merged_disks', [])
         for i, disk_info in enumerate(merged_disks, 1):
             content += f"磁盘 #{i}:\n"
-            if disk := disk_info.get('disk', ''):
+            disk = disk_info.get('disk', '') or ''
+            model = disk_info.get('model', '') or ''
+            serial = disk_info.get('serial', '') or ''
+            if disk:
                 content += f"  📛 磁盘设备: {disk}\n"
-            if model := disk_info.get('model', ''):
+            if model:
                 content += f"  🔧 硬盘型号: {model}\n"
-            if serial := disk_info.get('serial', ''):
+            if serial:
                 content += f"  🔢 序列号: {serial}\n"
-            if i < len(merged_disks):  # 只在不是最后一个磁盘时添加空行
+            if not (disk or model or serial):
+                fallback = self._format_disk_fallback(disk_info)
+                if fallback:
+                    content += f"  {fallback}\n"
+                else:
+                    content += "  （未解析到磁盘详情，请查看系统日志）\n"
+            if i < len(merged_disks):
                 content += "\n"
         
         return content
@@ -952,7 +1037,7 @@ class MultiPlatformNotifier:
             return False
         
         # 构建消息
-        title = self.EVENT_TITLES.get(event_type, f"📋 系统事件: {event_type}")
+        title = self.EVENT_TITLES.get(event_type, f"📋 飞牛NAS-系统事件: {event_type}")
         content = self._build_system_content(event_type, event_data, message)
         multi_msg = MultiPlatformMessage(title=title, content=content)
         
@@ -1010,6 +1095,9 @@ class MultiPlatformNotifier:
             # 错误事件：按5分钟去重
             window = int(time.time() / 300)  # 5分钟窗口
             key = f"{event_type}_{window}"
+        elif event_type == 'TEST_PUSH':
+            # 测试推送：每次发送独立，不去重
+            key = f"TEST_PUSH_{time.time()}"
         else:
             # 其他事件：按分钟去重
             minute_window = int(time.time() / 60)

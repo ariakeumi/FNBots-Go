@@ -17,6 +17,7 @@ from utils.logger import setup_logging
 from monitor.db_log_poller import DBLogPoller
 from monitor.event_processor import EventProcessor
 from notifier.unified_notifier import UnifiedNotifier
+from web.ui_app import start_ui_server_in_background
 
 class Application:
     """主应用程序"""
@@ -47,9 +48,13 @@ class Application:
         try:
             print("开始初始化应用组件...")
             
-            # 加载配置
+            # 加载配置（可不配置 Webhook，部署后通过 UI 配置）
             self.config = Config()
-            print(f"配置加载完成: {self.config.wechat_webhook_url[:50]}...")
+            has_webhook = any([self.config.wechat_webhook_url, self.config.dingtalk_webhook_url, self.config.feishu_webhook_url, self.config.bark_url])
+            if has_webhook:
+                print("配置加载完成（已配置推送渠道）")
+            else:
+                print("配置加载完成（未配置推送渠道，可在 Web 配置页面添加）")
             
             # 设置日志
             self.logger = setup_logging(self.config)
@@ -64,28 +69,29 @@ class Application:
             print(f"去重窗口: {self.config.dedup_window}秒")
             print(f"连接池大小: {self.config.http_pool_size}")
             
-            # 检查Webhook配置
+            # 检查推送渠道配置
             if self.config.wechat_webhook_url:
                 print(f"企业微信Webhook: 已配置")
             if self.config.dingtalk_webhook_url:
                 print(f"钉钉Webhook: 已配置")
             if self.config.feishu_webhook_url:
                 print(f"飞书Webhook: 已配置")
+            if self.config.bark_url:
+                print(f"Bark: 已配置")
+            if not has_webhook:
+                print("未配置推送渠道：不轮询数据库、不推送消息，仅提供 Web 配置页面。")
+                print("初始化完成（待配置）。")
+                return True
             
-            if not any([self.config.wechat_webhook_url, self.config.dingtalk_webhook_url, self.config.feishu_webhook_url]):
-                print("警告: 未配置任何Webhook URL，通知功能将不可用")
-            
-            # 初始化通知器 - 现在支持多平台
+            # 已配置推送渠道：初始化通知器、事件处理器、数据库轮询器
             print("初始化多平台通知器...")
             self.notifier = UnifiedNotifier(self.config)
             print("多平台通知器初始化完成")
             
-            # 初始化事件处理器
             print("正在初始化事件处理器...")
             self.event_processor = EventProcessor(self.notifier, self.config)
             print("事件处理器初始化完成")
             
-            # 初始化数据库日志轮询器
             print("正在初始化数据库日志轮询器...")
             self.log_poller = DBLogPoller(
                 db_path=self.config.logger_db_path,
@@ -95,7 +101,6 @@ class Application:
             )
             print(f"数据库轮询器初始化完成（间隔: {self.config.logger_poll_interval}秒，数据库: {self.config.logger_db_path}）")
             
-            # 注册事件处理器
             print("开始注册事件处理器...")
             for event_type in self.config.monitor_events:
                 handler = self.event_processor.get_handler(event_type)
@@ -111,6 +116,54 @@ class Application:
             print(f"初始化失败: {e}")
             traceback.print_exc()
             return False
+
+    def reload_config(self) -> None:
+        """保存配置后热加载：从配置文件重新加载并更新通知器与轮询器，无需重启容器。"""
+        from web.ui_app import CONFIG_FILE
+        if not self.config:
+            return
+        ok = self.config.reload_from_file(CONFIG_FILE)
+        if not ok:
+            return
+        has_webhook = any([
+            self.config.wechat_webhook_url,
+            self.config.dingtalk_webhook_url,
+            self.config.feishu_webhook_url,
+            self.config.bark_url,
+        ])
+        if self.notifier is None and has_webhook:
+            print("配置已保存并热加载：检测到新配置的推送渠道，正在启动监控...")
+            self.notifier = UnifiedNotifier(self.config)
+            self.event_processor = EventProcessor(self.notifier, self.config)
+            self.log_poller = DBLogPoller(
+                db_path=self.config.logger_db_path,
+                cursor_dir=self.config.cursor_dir,
+                poll_interval=self.config.logger_poll_interval,
+                monitor_events=self.config.monitor_events,
+            )
+            for event_type in self.config.monitor_events:
+                handler = self.event_processor.get_handler(event_type)
+                if handler:
+                    self.log_poller.add_handler(event_type, handler)
+            if self.log_poller:
+                self.log_poller.start()
+            if self.logger:
+                self.logger.info("热加载完成：监控已启动")
+        elif self.notifier is not None:
+            self.notifier.reload_config()
+            if self.log_poller is not None:
+                self.log_poller.update_config(
+                    monitor_events=self.config.monitor_events,
+                    poll_interval=self.config.logger_poll_interval,
+                    db_path=self.config.logger_db_path,
+                )
+                self.log_poller.clear_handlers()
+                for event_type in self.config.monitor_events:
+                    handler = self.event_processor.get_handler(event_type)
+                    if handler:
+                        self.log_poller.add_handler(event_type, handler)
+            if self.logger:
+                self.logger.info("热加载完成：监控配置已更新")
     
     def _signal_handler(self, signum, frame):
         """信号处理器"""
@@ -133,30 +186,48 @@ class Application:
             
             self.running = True
 
-            # 启动通知健康监控线程
-            self._start_notification_health_monitor()
-            
-            # 发送启动通知
-            if self.notifier:
+            # 启动配置 UI 服务（后台线程），无 Webhook 时也提供页面供用户配置；保存时触发热加载
+            ui_port = os.getenv("UI_PORT", "18080")
+            try:
+                ui_thread = start_ui_server_in_background(on_config_saved=self.reload_config)
+                print(f"配置 UI 已启动（端口 {ui_port}），线程: {ui_thread.name}")
+            except Exception as e:
+                print(f"配置 UI 启动失败: {e}")
+
+            if not self.notifier:
+                # 未配置推送渠道：不轮询数据库、不推送消息，仅提示用户去 Web 配置
+                print("")
+                print("  >>> 请访问 Web 配置页面完成推送渠道配置 <<<")
+                print(f"  >>> 地址: http://<本机IP>:{ui_port}  （保存后自动生效，无需重启） <<<")
+                print("")
+            else:
+                # 已配置推送渠道：正常启动监控与推送
+                self._start_notification_health_monitor()
                 self.notifier.send_system_notification(
                     'APP_START',
                     '飞牛NAS日志监控系统已启动，开始监控系统事件',
                     {'hostname': socket.gethostname(), 'version': '1.0'}
                 )
+                if self.log_poller:
+                    print("启动数据库日志轮询器...")
+                    self.log_poller.start()
+                else:
+                    print("无法启动数据库轮询器")
             
             # 设置信号处理
             signal.signal(signal.SIGINT, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
-            
-            # 启动数据库轮询器
-            if self.log_poller:
-                print("启动数据库日志轮询器...")
-                self.log_poller.start()
-            else:
-                print("无法启动数据库轮询器")
 
             # 保持主线程运行，直到收到 SIGINT/SIGTERM 将 self.running 置为 False
+            loop_count = 0
             while self.running:
+                loop_count += 1
+                if loop_count % 60 == 0 and self.notifier:
+                    try:
+                        self.notifier.flush_dnd_buffer_if_needed()
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.warning("勿扰汇总检查异常: %s", e)
                 time.sleep(1)
 
         except KeyboardInterrupt:

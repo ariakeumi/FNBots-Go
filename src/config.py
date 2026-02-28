@@ -47,6 +47,11 @@ class Config:
     logger_db_path: str = "/usr/trim/var/eventlogger_service/logger_data.db3"
     logger_poll_interval: int = 3  # 秒，不宜过小以免频繁读库
     
+    # 勿扰模式（开启后在该时段内不推送，结束后汇总为一条消息）
+    dnd_enabled: bool = False
+    dnd_start_time: str = "22:00"  # HH:MM，如 22:00
+    dnd_end_time: str = "07:00"   # HH:MM，如 07:00（跨日则到次日该时间结束）
+
     # 高级配置
     max_log_age: int = 7  # 应用运行日志 monitor_*.log 保留天数
     notification_restart_enabled: bool = True
@@ -91,7 +96,46 @@ class Config:
                             setattr(self, key, value)
             except Exception as e:
                 print(f"警告: 配置文件读取失败 - {e}")
-    
+
+    def reload_from_file(self, config_path: Path) -> bool:
+        """从配置文件重新加载 Web UI 可修改的项（保存时热加载用）。返回是否成功。"""
+        if not config_path.exists():
+            return False
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return False
+        if "monitor_events" in data and isinstance(data["monitor_events"], list):
+            self.monitor_events = data["monitor_events"]
+        if "wechat_webhook_url" in data and isinstance(data["wechat_webhook_url"], str):
+            self.wechat_webhook_url = data["wechat_webhook_url"]
+        if "dingtalk_webhook_url" in data and isinstance(data["dingtalk_webhook_url"], str):
+            self.dingtalk_webhook_url = data["dingtalk_webhook_url"]
+        if "feishu_webhook_url" in data and isinstance(data["feishu_webhook_url"], str):
+            self.feishu_webhook_url = data["feishu_webhook_url"]
+        if "bark_url" in data and isinstance(data["bark_url"], str):
+            self.bark_url = data["bark_url"]
+        if "log_retention_days" in data and data["log_retention_days"] is not None:
+            try:
+                self.log_retention_days = int(data["log_retention_days"])
+            except (TypeError, ValueError):
+                pass
+        if "logger_poll_interval" in data and data["logger_poll_interval"] is not None:
+            try:
+                self.logger_poll_interval = int(data["logger_poll_interval"])
+            except (TypeError, ValueError):
+                pass
+        if "logger_db_path" in data and isinstance(data["logger_db_path"], str):
+            self.logger_db_path = data["logger_db_path"].strip()
+        if "dnd_enabled" in data:
+            self.dnd_enabled = bool(data["dnd_enabled"])
+        if "dnd_start_time" in data and isinstance(data["dnd_start_time"], str):
+            self.dnd_start_time = data["dnd_start_time"].strip()
+        if "dnd_end_time" in data and isinstance(data["dnd_end_time"], str):
+            self.dnd_end_time = data["dnd_end_time"].strip()
+        return True
+
     def _load_from_env(self):
         """从环境变量加载配置"""
         # 端口配置（保留此行以兼容旧版本，但不实际使用）
@@ -180,11 +224,7 @@ class Config:
 
     
     def _validate(self):
-        """验证配置"""
-        # 至少需要配置一个Webhook URL
-        if not self.wechat_webhook_url and not self.dingtalk_webhook_url and not self.feishu_webhook_url and not self.bark_url:
-            raise ValueError("必须配置至少一个WebHook URL (WECHAT_WEBHOOK_URL, DINGTALK_WEBHOOK_URL, FEISHU_WEBHOOK_URL 或 BARK_URL)")
-        
+        """验证配置（部署时不强制 Webhook，可在 UI 中配置）"""
         if self.wechat_webhook_url and not self.wechat_webhook_url.startswith('http'):
             raise ValueError("WECHAT_WEBHOOK_URL 必须是有效的URL")
         
