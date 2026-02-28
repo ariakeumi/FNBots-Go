@@ -1,5 +1,5 @@
 {
-  "wechat_webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=d43a402f-4a07-46b8-bc38-7a1759ccb0c5",
+  "wechat_webhook_url": "",
   "dingtalk_webhook_url": "",
   "feishu_webhook_url": "",
   "bark_url": "",
