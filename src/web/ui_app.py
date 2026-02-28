@@ -600,7 +600,7 @@ def create_app(on_config_saved=None) -> Flask:
       margin-top: 2px;
     }
     .test-section {
-      margin-top: 18px;
+      margin-top: 20px;
     }
     .status-bar {
       margin-top: 10px;
