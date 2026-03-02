@@ -69,6 +69,7 @@ class MultiPlatformNotifier:
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '💥 飞牛NAS-应用启动失败告警',
         'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE': '💥 飞牛NAS-应用自启动失败告警',
         'CPU_USAGE_ALARM': '📊 飞牛NAS-CPU使用率告警',
+        'CPU_USAGE_RESTORED': '✅ 飞牛NAS-CPU使用率恢复',
         'CPU_TEMPERATURE_ALARM': '🌡️ 飞牛NAS-CPU温度告警',
         'UPS_ONBATT': '⚠️ 飞牛NAS-UPS切换到电池供电模式',
         'UPS_ONBATT_LOWBATT': '🚨 飞牛NAS-UPS切换到电池供电模式',
@@ -107,6 +108,7 @@ class MultiPlatformNotifier:
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '应用{name}启动失败',
         'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE': '应用{name}自启动失败(Docker不可用)',
         'CPU_USAGE_ALARM': 'CPU使用率超过{threshold}%',
+        'CPU_USAGE_RESTORED': 'CPU使用率已恢复至阈值{threshold}%以下',
         'CPU_TEMPERATURE_ALARM': 'CPU温度超过{threshold}°C',
         'UPS_ONBATT': 'UPS提示：UPS切换到电池供电',
         'UPS_ONBATT_LOWBATT': 'UPS提示：UPS低电量自动关机',
@@ -144,6 +146,7 @@ class MultiPlatformNotifier:
         'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': '❗ 应用程序启动失败（本地运行异常），建议检查应用状态和日志。',
         'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE': '❗ 应用程序自启动失败（Docker 不可用），请检查 Docker 服务。',
         'CPU_USAGE_ALARM': '⚠️ CPU 使用率超过阈值，建议检查系统负载或关闭占用高的进程。',
+        'CPU_USAGE_RESTORED': '✅ CPU 使用率已恢复至阈值以下，负载正常。',
         'CPU_TEMPERATURE_ALARM': '⚠️ CPU 温度超过阈值，请检查散热与机箱通风。',
         'UPS_ONBATT': '⚠️ UPS切换到电池供电模式，请注意电池电量。',
         'UPS_ONBATT_LOWBATT': '⚠️ UPS切换到电池供电模式，低电量自动关机，请尽快恢复市电供应。',
@@ -553,7 +556,7 @@ class MultiPlatformNotifier:
             app_name = data.get('DISPLAY_NAME', data.get('APP_NAME', 'unknown'))
             minute_window = int(time.time() / 300)
             key = f"{event_type}_{app_name}_{minute_window}"
-        elif event_type in ['CPU_USAGE_ALARM', 'CPU_TEMPERATURE_ALARM']:
+        elif event_type in ['CPU_USAGE_ALARM', 'CPU_USAGE_RESTORED', 'CPU_TEMPERATURE_ALARM']:
             minute_window = int(time.time() / 300)
             key = f"{event_type}_{minute_window}"
         
@@ -635,6 +638,8 @@ class MultiPlatformNotifier:
             content += '\n' + self._build_app_auto_start_failed_content(event_data)
         elif event_type == 'CPU_USAGE_ALARM':
             content += '\n' + self._build_cpu_usage_alarm_content(event_data)
+        elif event_type == 'CPU_USAGE_RESTORED':
+            content += '\n' + self._build_cpu_usage_restored_content(event_data)
         elif event_type == 'CPU_TEMPERATURE_ALARM':
             content += '\n' + self._build_cpu_temperature_alarm_content(event_data)
         elif event_type == 'UPS_ONBATT':
@@ -937,11 +942,19 @@ class MultiPlatformNotifier:
         return content
 
     def _build_cpu_usage_alarm_content(self, event_data: Dict[str, Any]) -> str:
-        """构建 CPU 使用率告警内容"""
+        """构建 CPU 使用率告警内容（parameter 格式: data.THRESHOLD）"""
         content = ""
         data = event_data.get('data', {})
         threshold = data.get('THRESHOLD', 0)
         content += f"📊 使用率阈值: {threshold}%\n"
+        return content
+
+    def _build_cpu_usage_restored_content(self, event_data: Dict[str, Any]) -> str:
+        """构建 CPU 使用率恢复内容（parameter 格式: data.THRESHOLD）"""
+        content = ""
+        data = event_data.get('data', {})
+        threshold = data.get('THRESHOLD', 0)
+        content += f"✅ 使用率已恢复至阈值 {threshold}% 以下\n"
         return content
 
     def _build_cpu_temperature_alarm_content(self, event_data: Dict[str, Any]) -> str:

@@ -50,6 +50,7 @@ class EventProcessor:
             'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION': self._handle_app_start_failed_local,
             'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE': self._handle_app_auto_start_failed_docker,
             'CPU_USAGE_ALARM': self._handle_cpu_usage_alarm,
+            'CPU_USAGE_RESTORED': self._handle_cpu_usage_restored,
             'CPU_TEMPERATURE_ALARM': self._handle_cpu_temperature_alarm,
             'UPS_ONBATT': self._handle_ups_onbatt,
             'UPS_ONBATT_LOWBATT': self._handle_ups_onbatt_lowbatt,
@@ -444,7 +445,7 @@ class EventProcessor:
         self._store_notification_log('DISK_IO_ERR', event_data, raw_log, entry, source='db')
 
     def _handle_cpu_usage_alarm(self, event_data: Dict[str, Any], entry: JournalEntry):
-        """处理 CPU 使用率告警"""
+        """处理 CPU 使用率告警（parameter 含 data.THRESHOLD，如 {"from":"trim.resource-manager","eventId":"CPU_USAGE_ALARM","data":{"THRESHOLD":90},"datetime":...}）"""
         data = event_data.get('data', {})
         threshold = data.get('THRESHOLD', 0)
         timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -456,6 +457,22 @@ class EventProcessor:
             raw_log=raw_log,
             timestamp=timestamp
         )
+        self._store_notification_log('CPU_USAGE_ALARM', event_data, raw_log, entry, source='db')
+
+    def _handle_cpu_usage_restored(self, event_data: Dict[str, Any], entry: JournalEntry):
+        """处理 CPU 使用率恢复（parameter 含 data.THRESHOLD，如 {"from":"trim.resource-manager","eventId":"CPU_USAGE_RESTORED","data":{"THRESHOLD":90},"datetime":...}）"""
+        data = event_data.get('data', {})
+        threshold = data.get('THRESHOLD', 0)
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.logger.info(f"CPU使用率恢复: 已低于阈值 {threshold}%")
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type='CPU_USAGE_RESTORED',
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+        self._store_notification_log('CPU_USAGE_RESTORED', event_data, raw_log, entry, source='db')
 
     def _handle_cpu_temperature_alarm(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理 CPU 温度告警"""

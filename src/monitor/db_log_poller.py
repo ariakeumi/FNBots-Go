@@ -50,6 +50,8 @@ DB_EVENT_ID_TO_PROJECT: Dict[str, str] = {
     "DISK_IO_ERR": "DISK_IO_ERR",
     "DiskWakeup": "DiskWakeup",
     "DiskSpindown": "DiskSpindown",
+    "CPU_USAGE_ALARM": "CPU_USAGE_ALARM",
+    "CPU_USAGE_RESTORED": "CPU_USAGE_RESTORED",
 }
 
 

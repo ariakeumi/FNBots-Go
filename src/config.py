@@ -22,7 +22,8 @@ class Config:
     monitor_events: List[str] = field(default_factory=lambda: [
         "LoginSucc", "LoginSucc2FA1", "LoginFail", "Logout", "FoundDisk", "APP_CRASH",
         "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
-        "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
+        "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE",         "CPU_USAGE_ALARM",
+        "CPU_USAGE_RESTORED",
         "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
         "UPS_ENABLE", "UPS_DISABLE",
         "DiskWakeup", "DiskSpindown",
@@ -244,7 +245,7 @@ class Config:
         valid_events = {"LoginSucc", "LoginSucc2FA1", "LoginFail", "Logout", "FoundDisk", "APP_CRASH",
                         "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
                         "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE", "CPU_USAGE_ALARM",
-                        "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
+                        "CPU_USAGE_RESTORED", "CPU_TEMPERATURE_ALARM", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE",
                         "UPS_ENABLE", "UPS_DISABLE",
                         "DiskWakeup", "DiskSpindown",
                         "SSH_INVALID_USER", "SSH_AUTH_FAILED",
