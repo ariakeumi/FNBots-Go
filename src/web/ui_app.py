@@ -197,7 +197,7 @@ def create_app(on_config_saved=None) -> Flask:
         data = {
             "title": "FnMessageBots",
             "subtitle": "飞牛日志消息推送机器人",
-            "version": "V2.0.0",
+            "version": "dev_2.0.1",
             "events_by_category": events_by_category,
             "selected_events": monitor_events,
             "channels": channels,
@@ -344,7 +344,7 @@ def create_app(on_config_saved=None) -> Flask:
             content,
             {
                 "hostname": socket.gethostname(),
-                "version": "2.0.0",
+                "version": "2.0.1",
             },
         )
 
@@ -675,7 +675,7 @@ def create_app(on_config_saved=None) -> Flask:
       <div class="header">
         <div class="header-title" id="app-title">FnMessageBots</div>
         <div class="header-sub" id="app-subtitle">飞牛日志消息推送机器人</div>
-        <div class="header-ver" id="app-version">V2.0.0</div>
+        <div class="header-ver" id="app-version">dev_2.0.1</div>
       </div>
 
       <div class="section">
