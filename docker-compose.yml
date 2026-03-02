@@ -7,13 +7,12 @@ services:
     ports:
       - "18080:18080"
     volumes:
-      # 应用数据：运行日志与轮询游标（与 config 中 log_dir、cursor_dir 对应）
+      # 应用数据：左侧宿主机路径可自定义，右侧容器内路径请保持 /app/... 不变
       - ./data/logs:/app/data/logs:rw
       - ./data/cursor:/app/data/cursor:rw
       # eventlogger 数据库（只读），供轮询 log 表
       - /usr/trim/var/eventlogger_service:/usr/trim/var/eventlogger_service:ro
-      # 配置文件
-      # 配置文件：需要可写以支持 Web UI 保存
+      # 配置文件：左侧可改为如 /opt/fn-bots/config
       - ./config:/app/config:rw
 
     environment:
