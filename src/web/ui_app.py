@@ -92,6 +92,18 @@ APP_LIFECYCLE_EVENTS = {
     "APP_UNINSTALLED",
 }
 
+# 后端认可的事件 ID（与 config.Config 校验一致，保存时只保留此集合内的项）
+VALID_EVENT_IDS = frozenset({
+    "LoginSucc", "LoginSucc2FA1", "LoginFail", "Logout", "FoundDisk",
+    "SSH_INVALID_USER", "SSH_AUTH_FAILED", "SSH_LOGIN_SUCCESS", "SSH_DISCONNECTED",
+    "APP_CRASH", "APP_UPDATE_FAILED", "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
+    "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE",
+    "APP_STARTED", "APP_STOPPED", "APP_UPDATED", "APP_INSTALLED", "APP_AUTO_STARTED", "APP_UNINSTALLED",
+    "CPU_USAGE_ALARM", "CPU_USAGE_RESTORED", "CPU_TEMPERATURE_ALARM",
+    "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE", "UPS_ENABLE", "UPS_DISABLE",
+    "DiskWakeup", "DiskSpindown", "DISK_IO_ERR",
+})
+
 # 默认勾选的事件（不含应用生命周期 6 项；应用启动/自启动失败、UPS 开启/关闭 默认不勾选）
 DEFAULT_SELECTED_EVENTS = [
     "LoginSucc",
@@ -164,10 +176,10 @@ def create_app(on_config_saved=None) -> Flask:
         if isinstance(raw_events, list):
             raw_set = set(raw_events)
             new_default_set = set(DEFAULT_SELECTED_EVENTS)
+            # 仅当配置恰好为「旧版默认（含启动失败/UPS 开关）」时迁移为新默认；不迁移「全选」（= 新默认+生命周期+额外），否则会覆盖用户的全选
             old_default_with_extra = new_default_set | OLD_DEFAULT_SELECTED_EVENTS_WITH_EXTRA
             old_full_default = new_default_set | APP_LIFECYCLE_EVENTS
-            old_full_default_with_extra = old_default_with_extra | APP_LIFECYCLE_EVENTS
-            if raw_set == old_default_with_extra or raw_set == old_full_default_with_extra:
+            if raw_set == old_default_with_extra:
                 raw["monitor_events"] = DEFAULT_SELECTED_EVENTS
                 _save_raw_config(raw)
                 monitor_events = DEFAULT_SELECTED_EVENTS
@@ -218,6 +230,8 @@ def create_app(on_config_saved=None) -> Flask:
         payload = request.get_json(force=True, silent=True) or {}
 
         events = payload.get("events") or []
+        # 只保留后端认可的事件 ID，避免写入非法值导致热加载或重启异常
+        events = [e for e in events if e in VALID_EVENT_IDS]
         channels = payload.get("channels") or []
         log_retention_days = payload.get("log_retention_days", 7)
         logger_poll_interval = payload.get("logger_poll_interval", 3)
@@ -309,7 +323,10 @@ def create_app(on_config_saved=None) -> Flask:
             }
         )
 
-        _save_raw_config(raw)
+        try:
+            _save_raw_config(raw)
+        except Exception as e:
+            return jsonify({"ok": False, "message": f"配置写入失败（{e}），请检查 config 目录是否可写。"}), 500
 
         if callable(on_config_saved):
             try:
@@ -339,7 +356,7 @@ def create_app(on_config_saved=None) -> Flask:
             timeout=int(raw.get("http_timeout", 10)),
         )
 
-        ok = notifier.send_system_notification(
+        out = notifier.send_system_notification(
             "TEST_PUSH",
             content,
             {
@@ -347,10 +364,35 @@ def create_app(on_config_saved=None) -> Flask:
                 "version": "2.0.1",
             },
         )
+        ok = out.get("success", False) if isinstance(out, dict) else bool(out)
 
         if ok:
             return jsonify({"ok": True, "message": "测试消息已发送，请检查各渠道是否收到。"})
         return jsonify({"ok": False, "message": "所有渠道发送失败，请检查配置。"}), 500
+
+    @app.get("/api/push-stats")
+    def get_push_stats():
+        """推送数据汇总：总条数/成功/失败，当日条数/成功/失败。"""
+        try:
+            from utils import push_stats
+            if not push_stats.get_stats_path():
+                raw = _load_raw_config()
+                push_stats.init(raw.get("cursor_dir", "./data/cursor"))
+            return jsonify({
+                "ok": True,
+                "data": {
+                    "total": push_stats.get_total(),
+                    "today": push_stats.get_today(),
+                },
+            })
+        except Exception:
+            return jsonify({
+                "ok": True,
+                "data": {
+                    "total": {"total": 0, "success": 0, "fail": 0},
+                    "today": {"total": 0, "success": 0, "fail": 0},
+                },
+            })
 
     @app.get("/")
     def index():
@@ -408,6 +450,34 @@ def create_app(on_config_saved=None) -> Flask:
       font-size: 13px;
       color: #9ca3af;
     }
+    .stats-section { margin-bottom: 16px; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px 20px;
+    }
+    .stats-block {
+      padding: 10px 14px;
+      background: #fff;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+    }
+    .stats-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+    .stats-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 16px;
+      font-size: 13px;
+      color: #6b7280;
+    }
+    .stats-row .stats-total { color: #111827; }
+    .stats-row .stats-ok { color: #059669; }
+    .stats-row .stats-fail { color: #dc2626; }
     .section {
       border-radius: 12px;
       padding: 18px 20px 16px;
@@ -666,6 +736,9 @@ def create_app(on_config_saved=None) -> Flask:
       .system-grid {
         grid-template-columns: 1fr;
       }
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -676,6 +749,30 @@ def create_app(on_config_saved=None) -> Flask:
         <div class="header-title" id="app-title">FnMessageBots</div>
         <div class="header-sub" id="app-subtitle">飞牛日志消息推送机器人</div>
         <div class="header-ver" id="app-version">dev_2.0.1</div>
+      </div>
+
+      <div class="section stats-section">
+        <div class="section-title">
+          <span>推送数据汇总</span>
+        </div>
+        <div class="stats-grid">
+          <div class="stats-block">
+            <div class="stats-label">总推送</div>
+            <div class="stats-row">
+              <span class="stats-total">共 <strong id="stat-total-total">0</strong> 条</span>
+              <span class="stats-ok">成功 <strong id="stat-total-success">0</strong></span>
+              <span class="stats-fail">失败 <strong id="stat-total-fail">0</strong></span>
+            </div>
+          </div>
+          <div class="stats-block">
+            <div class="stats-label">当日推送</div>
+            <div class="stats-row">
+              <span class="stats-total">共 <strong id="stat-today-total">0</strong> 条</span>
+              <span class="stats-ok">成功 <strong id="stat-today-success">0</strong></span>
+              <span class="stats-fail">失败 <strong id="stat-today-fail">0</strong></span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="section">
@@ -914,10 +1011,27 @@ def create_app(on_config_saved=None) -> Flask:
         });
 
         setStatus(false, "");
+        loadPushStats();
       } catch (e) {
         console.error(e);
         setStatus(false, "加载配置失败，请检查服务是否正常运行。");
       }
+    }
+
+    async function loadPushStats() {
+      try {
+        const res = await fetch("/api/push-stats");
+        const json = await res.json();
+        if (!json.ok || !json.data) return;
+        const t = json.data.total || {};
+        const d = json.data.today || {};
+        document.getElementById("stat-total-total").textContent = (t.total ?? 0);
+        document.getElementById("stat-total-success").textContent = (t.success ?? 0);
+        document.getElementById("stat-total-fail").textContent = (t.fail ?? 0);
+        document.getElementById("stat-today-total").textContent = (d.total ?? 0);
+        document.getElementById("stat-today-success").textContent = (d.success ?? 0);
+        document.getElementById("stat-today-fail").textContent = (d.fail ?? 0);
+      } catch (e) { /* ignore */ }
     }
 
     addChannelBtn.addEventListener("click", () => {
@@ -964,6 +1078,7 @@ def create_app(on_config_saved=None) -> Flask:
         if (res.ok && json.ok) {
           showToast(true, json.message || "配置已保存");
           testBtn.disabled = false;
+          loadConfig();
         } else {
           showToast(false, json.message || "保存失败");
         }
@@ -1001,6 +1116,7 @@ def create_app(on_config_saved=None) -> Flask:
 
     window.addEventListener("load", () => {
       loadConfig();
+      setInterval(loadPushStats, 30000);
     });
   </script>
 </body>

@@ -117,7 +117,7 @@ class UnifiedNotifier:
         return "\n".join(lines)
 
     def flush_dnd_buffer_if_needed(self) -> None:
-        """若当前不在勿扰时段且缓冲非空，则汇总为一条消息推送并清空缓冲。"""
+        """若当前不在勿扰时段且缓冲非空，则汇总为一条消息推送并清空缓冲；再发一条推送结果（成功/失败渠道数）。"""
         if self._in_dnd_window():
             return
         if not self._dnd_buffer:
@@ -126,9 +126,24 @@ class UnifiedNotifier:
         if not summary:
             return
         try:
-            self.multi_platform_notifier.send_system_notification(
+            out = self.multi_platform_notifier.send_system_notification(
                 "DND_SUMMARY",
                 summary,
+                {"hostname": "", "version": ""},
+            )
+            success = out.get("success", False) if isinstance(out, dict) else bool(out)
+            sc = out.get("success_count", 0) if isinstance(out, dict) else 0
+            fc = out.get("fail_count", 0) if isinstance(out, dict) else 0
+            try:
+                from utils.push_stats import record as record_push
+                record_push(success)
+            except Exception:
+                pass
+            # 再发一条短消息：勿扰汇总推送结果（成功/失败渠道数）
+            result_msg = f"本次汇总推送：成功 {sc} 个渠道，失败 {fc} 个渠道"
+            self.multi_platform_notifier.send_system_notification(
+                "DND_SUMMARY",
+                result_msg,
                 {"hostname": "", "version": ""},
             )
         except Exception as e:
@@ -166,7 +181,11 @@ class UnifiedNotifier:
         success = self.multi_platform_notifier.send_notification(
             event_type, event_data, raw_log, timestamp
         )
-        
+        try:
+            from utils.push_stats import record as record_push
+            record_push(success)
+        except Exception:
+            pass
         # 确定实际使用的方法（检查哪些平台真正发送了）
         active_platforms = []
         if self.config.wechat_webhook_url:
@@ -215,10 +234,16 @@ class UnifiedNotifier:
                 method="dnd_skipped",
                 details={"event_type": event_type, "message": message[:50]},
             )
-        # 通过多平台通知器发送系统通知
-        success = self.multi_platform_notifier.send_system_notification(
+        # 通过多平台通知器发送系统通知（返回 dict: success, success_count, fail_count）
+        out = self.multi_platform_notifier.send_system_notification(
             event_type, message, additional_info
         )
+        success = out.get("success", False) if isinstance(out, dict) else bool(out)
+        try:
+            from utils.push_stats import record as record_push
+            record_push(success)
+        except Exception:
+            pass
         
         # 确定实际使用的方法（检查哪些平台真正发送了）
         active_platforms = []

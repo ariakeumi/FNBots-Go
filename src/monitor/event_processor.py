@@ -666,20 +666,20 @@ class EventProcessor:
         cache_list.clear()
 
     def _extract_disk_details(self, event_data: Dict[str, Any]) -> List[Dict[str, str]]:
-        """从事件数据中提取磁盘信息。支持飞牛 NAS 的顶层格式：{"template":"DiskSpindown","disk":"sdb","model":"...","serial":"..."}"""
+        """从事件数据中提取磁盘信息。支持飞牛 NAS 的顶层格式：{"template":"DiskSpindown","user":"Lando","model":"...","serial":"..."} 或 {"disk":"sdb","model":"...","serial":"..."}"""
         details = []
 
         def add_candidate(source):
             if isinstance(source, dict):
                 details.append(source)
 
-        # 飞牛 NAS：parameter 顶层即为 disk/model/serial，无 data 嵌套
+        # 飞牛 NAS：parameter 顶层即为 disk/model/serial（或 template/user/model/serial），无 data 嵌套
         disk = self._pick_disk_field(event_data)
         model = self._pick_field(event_data, [
-            'model', 'MODEL', 'disk_model', 'diskModel', 'modelName', 'model_name', 'Model'
+            'model', 'MODEL', 'Model', 'disk_model', 'diskModel', 'modelName', 'model_name'
         ])
         serial = self._pick_field(event_data, [
-            'serial', 'SERIAL', 'sn', 'SN', 'serial_number', 'serialNumber', 'SerialNumber'
+            'serial', 'SERIAL', 'Serial', 'sn', 'SN', 'serial_number', 'serialNumber', 'SerialNumber'
         ])
         if disk or model or serial:
             return [{'disk': disk, 'model': model, 'serial': serial}]

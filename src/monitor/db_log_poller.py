@@ -68,7 +68,8 @@ def _logtime_to_datetime(logtime: int) -> str:
 def _parse_parameter(parameter: Optional[str], uname: Optional[str], uid: Optional[int]) -> Dict[str, Any]:
     """解析 parameter JSON，并合并 uname/uid。
     常见 eventId 的 parameter 结构示例：
-    - APP_CRASH: {"data":{"APP_ID", "APP_NAME", "DISPLAY_NAME", ...}, "datetime", "eventId", "from", "level"}
+    - APP_CRASH: {"data":{...}, "datetime", "eventId", "from", "level"}
+    - SshdLogonout / SshdLoginAuthFail / SshdLoginSucc: {"user":"xxx", "from":"192.168.1.155"}，from 为 IP
     """
     data: Dict[str, Any] = {}
     if parameter and parameter.strip():
@@ -81,7 +82,8 @@ def _parse_parameter(parameter: Optional[str], uname: Optional[str], uid: Option
     if uid is not None and "uid" not in data:
         data["uid"] = uid
     if "IP" not in data and "ip" not in data:
-        data["IP"] = ""
+        # 飞牛 SSH 事件等使用 "from" 表示来源 IP，统一映射到 IP 供通知展示
+        data["IP"] = data.get("from") or data.get("FROM") or ""
     return data
 
 

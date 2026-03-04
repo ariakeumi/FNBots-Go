@@ -809,11 +809,11 @@ class MultiPlatformNotifier:
         return content
     
     def _format_disk_fallback(self, disk_info: Dict[str, Any]) -> str:
-        """当 disk/model/serial 都为空时，从 full_event_data 或 data 中拼一条可读摘要"""
+        """当 disk/model/serial 都为空时，从 full_event_data 或 data 中拼一条可读摘要（支持飞牛顶层 template/user/model/serial）"""
         raw = disk_info.get('full_event_data') or disk_info.get('data')
         if not isinstance(raw, dict):
             return ""
-        # 优先从 data 子段取
+        # 优先从 data 子段取，否则用顶层（飞牛格式：template, user, model, serial 在顶层）
         data = raw.get('data') if isinstance(raw.get('data'), dict) else raw
         parts = []
         for key in ('disk', 'device', 'path', 'name', 'DEVICE', 'DISK', 'deviceName', 'dev'):
@@ -823,18 +823,18 @@ class MultiPlatformNotifier:
                     v = v.get('path') or v.get('device') or v.get('name') or str(v)[:80]
                 parts.append(f"设备: {v}")
                 break
-        for key in ('model', 'MODEL', 'modelName'):
+        for key in ('model', 'MODEL', 'Model', 'modelName'):
             if key in data and data[key]:
                 parts.append(f"型号: {data[key]}")
                 break
-        for key in ('serial', 'SERIAL', 'sn', 'SN', 'serialNumber'):
+        for key in ('serial', 'SERIAL', 'Serial', 'sn', 'SN', 'serialNumber'):
             if key in data and data[key]:
                 parts.append(f"序列号: {data[key]}")
                 break
         if parts:
             return " ".join(parts)
         # 无标准字段时，列出 data 中部分键值便于排查
-        skip = {'raw', 'datetime', 'eventId', 'level', 'from'}
+        skip = {'raw', 'datetime', 'eventId', 'level', 'from', 'template', 'cat'}
         extra = [f"{k}: {v}" for k, v in list(data.items())[:5] if k not in skip and v]
         if extra:
             return "原始: " + ", ".join(extra)[:120]
@@ -850,6 +850,11 @@ class MultiPlatformNotifier:
             disk = disk_info.get('disk', '') or ''
             model = disk_info.get('model', '') or ''
             serial = disk_info.get('serial', '') or ''
+            if not (disk or model or serial) and isinstance(disk_info.get('full_event_data'), dict):
+                raw = disk_info['full_event_data']
+                model = model or raw.get('model') or raw.get('MODEL') or raw.get('Model') or ''
+                serial = serial or raw.get('serial') or raw.get('SERIAL') or raw.get('Serial') or raw.get('sn') or raw.get('SN') or ''
+                disk = disk or raw.get('disk') or raw.get('device') or raw.get('dev') or ''
             if disk:
                 content += f"  📛 磁盘设备: {disk}\n"
             if model:
@@ -857,7 +862,6 @@ class MultiPlatformNotifier:
             if serial:
                 content += f"  🔢 序列号: {serial}\n"
             if not (disk or model or serial):
-                # 未解析到具体字段时，尝试从 full_event_data / data 中取可读信息
                 fallback = self._format_disk_fallback(disk_info)
                 if fallback:
                     content += f"  {fallback}\n"
@@ -878,6 +882,11 @@ class MultiPlatformNotifier:
             disk = disk_info.get('disk', '') or ''
             model = disk_info.get('model', '') or ''
             serial = disk_info.get('serial', '') or ''
+            if not (disk or model or serial) and isinstance(disk_info.get('full_event_data'), dict):
+                raw = disk_info['full_event_data']
+                model = model or raw.get('model') or raw.get('MODEL') or raw.get('Model') or ''
+                serial = serial or raw.get('serial') or raw.get('SERIAL') or raw.get('Serial') or raw.get('sn') or raw.get('SN') or ''
+                disk = disk or raw.get('disk') or raw.get('device') or raw.get('dev') or ''
             if disk:
                 content += f"  📛 磁盘设备: {disk}\n"
             if model:
@@ -1019,17 +1028,17 @@ class MultiPlatformNotifier:
         merged_content = f"{message.title}\n\n{message.content}"
         return MultiPlatformMessage(title=message.title, content=merged_content)
     
-    def send_system_notification(self, event_type: str, message: str, additional_info: Dict[str, Any] = None) -> bool:
+    def send_system_notification(self, event_type: str, message: str, additional_info: Dict[str, Any] = None):
         """
         发送系统事件通知
         
         Args:
-            event_type: 事件类型 ('APP_START', 'APP_STOP', 'APP_ERROR')
+            event_type: 事件类型 ('APP_START', 'APP_STOP', 'APP_ERROR', 'DND_SUMMARY')
             message: 详细消息
             additional_info: 额外信息字典
             
         Returns:
-            是否发送成功
+            dict: {"success": bool, "success_count": int, "fail_count": int}
         """
         self.logger.info(f"准备发送系统事件通知: {event_type}")
         
@@ -1082,16 +1091,18 @@ class MultiPlatformNotifier:
             results.append(bark_result)
             self.logger.debug(f"Bark系统通知发送结果: {bark_result}")
         
-        # 处理结果
-        if results and any(results):  # 至少一个平台发送成功
+        # 处理结果：返回是否成功及成功/失败渠道数（供勿扰汇总等展示）
+        success_count = sum(1 for r in results if r)
+        fail_count = len(results) - success_count
+        any_ok = bool(results and success_count > 0)
+        if any_ok:
             self.sent_events[event_fingerprint] = time.time()
             self._record_send_result(True)
             self.logger.info(f"系统事件通知发送成功: {event_type}")
-            return True
         else:
             self._record_send_result(False)
             self.logger.warning(f"系统事件通知发送失败: {event_type}")
-            return False
+        return {"success": any_ok, "success_count": success_count, "fail_count": fail_count}
     
     def _generate_system_fingerprint(self, event_type: str, event_data: Dict[str, Any]) -> str:
         """生成系统事件指纹（用于去重）"""
