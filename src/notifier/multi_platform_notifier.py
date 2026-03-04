@@ -543,23 +543,24 @@ class MultiPlatformNotifier:
         return any_success
     
     def _send_to_bark(self, message: MultiPlatformMessage) -> bool:
-        """发送到Bark，支持 {content} 占位符、直连URL，以及同一渠道多个地址"""
+        """发送到Bark。支持占位符：{title}、{content}；若仅有 {content} 则把标题并入正文避免丢失。直连 URL 则拼接 /标题/内容。"""
         urls = self._iter_urls(self.bark_url)
         if not urls:
             return False
 
-        encoded_content = urllib.parse.quote(message.content, safe='')
         encoded_title = urllib.parse.quote(message.title, safe='')
+        encoded_content = urllib.parse.quote(message.content, safe='')
+        encoded_title_and_content = urllib.parse.quote(message.title + '\n\n' + message.content, safe='')
 
         any_success = False
         for raw_url in urls:
-            if '{content}' in raw_url:
-                # 仅替换内容占位符，不改动用户参数，也不添加 title
-                bark_push_url = raw_url.replace('{content}', encoded_content)
+            if '{title}' in raw_url and '{content}' in raw_url:
+                bark_push_url = raw_url.replace('{title}', encoded_title).replace('{content}', encoded_content)
+            elif '{content}' in raw_url:
+                # 仅有 {content} 时无 {title}，把事件标题放进正文首行，避免推送看不到标题
+                bark_push_url = raw_url.replace('{content}', encoded_title_and_content)
             else:
-                # 直连URL：拼接 /飞牛NAS通知/内容
                 bark_push_url = f"{raw_url.rstrip('/')}/{encoded_title}/{encoded_content}"
-            
             result = self.connection_pool.get(bark_push_url)
             if result:
                 any_success = True
