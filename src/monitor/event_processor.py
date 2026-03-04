@@ -67,6 +67,19 @@ class EventProcessor:
             'APP_AUTO_STARTED': lambda ed, e: self._handle_app_lifecycle('APP_AUTO_STARTED', ed, e),
             'APP_UNINSTALLED': lambda ed, e: self._handle_app_lifecycle('APP_UNINSTALLED', ed, e),
             'DISK_IO_ERR': self._handle_disk_io_err,
+            # 可选事件（默认不推送，需用户勾选）
+            'ARCHIVING_SUCCESS': lambda ed, e: self._handle_simple_notification('ARCHIVING_SUCCESS', ed, e),
+            'DeleteFile': lambda ed, e: self._handle_simple_notification('DeleteFile', ed, e),
+            'MovetoTrashbin': lambda ed, e: self._handle_simple_notification('MovetoTrashbin', ed, e),
+            'SHARE_EVENTID_DEL': lambda ed, e: self._handle_simple_notification('SHARE_EVENTID_DEL', ed, e),
+            'SHARE_EVENTID_PUT': lambda ed, e: self._handle_simple_notification('SHARE_EVENTID_PUT', ed, e),
+            'WEBDAV_ENABLED': lambda ed, e: self._handle_simple_notification('WEBDAV_ENABLED', ed, e),
+            'WEBDAV_DISABLED': lambda ed, e: self._handle_simple_notification('WEBDAV_DISABLED', ed, e),
+            'SAMBA_ENABLED': lambda ed, e: self._handle_simple_notification('SAMBA_ENABLED', ed, e),
+            'SAMBA_DISABLED': lambda ed, e: self._handle_simple_notification('SAMBA_DISABLED', ed, e),
+            'FW_ENABLE': lambda ed, e: self._handle_simple_notification('FW_ENABLE', ed, e),
+            'FW_DISABLE': lambda ed, e: self._handle_simple_notification('FW_DISABLE', ed, e),
+            'SECURITY_PORTCHANGED': lambda ed, e: self._handle_simple_notification('SECURITY_PORTCHANGED', ed, e),
         }
         
         # 磁盘事件合并缓存
@@ -443,6 +456,18 @@ class EventProcessor:
             timestamp=timestamp
         )
         self._store_notification_log('DISK_IO_ERR', event_data, raw_log, entry, source='db')
+
+    def _handle_simple_notification(self, event_type: str, event_data: Dict[str, Any], entry: JournalEntry):
+        """可选事件的通用处理：解析 parameter 后直接推送，无额外逻辑。"""
+        timestamp = getattr(entry, 'timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        raw_log = getattr(entry, 'raw_data', '{}')
+        self.notifier.send_notification(
+            event_type=event_type,
+            event_data=event_data,
+            raw_log=raw_log,
+            timestamp=timestamp
+        )
+        self._store_notification_log(event_type, event_data, raw_log, entry, source='db')
 
     def _handle_cpu_usage_alarm(self, event_data: Dict[str, Any], entry: JournalEntry):
         """处理 CPU 使用率告警（parameter 含 data.THRESHOLD，如 {"from":"trim.resource-manager","eventId":"CPU_USAGE_ALARM","data":{"THRESHOLD":90},"datetime":...}）"""

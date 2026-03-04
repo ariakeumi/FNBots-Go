@@ -73,9 +73,22 @@ class Config:
         self._validate()
         self._ensure_directories()
     
+    def _get_config_file_path(self) -> Path:
+        """获取配置文件路径：Docker 下用 /app/config，本地用项目根目录 config。"""
+        app_home = os.getenv("APP_HOME")
+        if app_home:
+            return Path(app_home) / "config" / "config.json"
+        if Path("/app/config/config.json").exists():
+            return Path("/app/config/config.json")
+        # 从 src/config.py 向上到项目根
+        candidate = Path(__file__).resolve().parent.parent / "config" / "config.json"
+        if candidate.exists():
+            return candidate
+        return Path("/app/config/config.json")
+
     def _load_from_file_skip_if_set(self):
         """从配置文件加载（可选），但跳过已从环境变量设置的配置项"""
-        config_file = Path('/app/config/config.json')
+        config_file = self._get_config_file_path()
         if config_file.exists():
             try:
                 with open(config_file, 'r') as f:
@@ -251,7 +264,10 @@ class Config:
                         "SSH_INVALID_USER", "SSH_AUTH_FAILED",
                         "SSH_LOGIN_SUCCESS", "SSH_DISCONNECTED",
                         "APP_STARTED", "APP_STOPPED", "APP_UPDATED", "APP_INSTALLED", "APP_AUTO_STARTED", "APP_UNINSTALLED",
-                        "DISK_IO_ERR"}
+                        "DISK_IO_ERR",
+                        "ARCHIVING_SUCCESS", "DeleteFile", "MovetoTrashbin", "SHARE_EVENTID_DEL", "SHARE_EVENTID_PUT",
+                        "WEBDAV_ENABLED", "WEBDAV_DISABLED", "SAMBA_ENABLED", "SAMBA_DISABLED",
+                        "FW_ENABLE", "FW_DISABLE", "SECURITY_PORTCHANGED"}
         for event in self.monitor_events:
             if event not in valid_events:
                 raise ValueError(f"未知事件类型: {event}")

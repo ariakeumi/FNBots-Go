@@ -90,6 +90,19 @@ class MultiPlatformNotifier:
         'DISK_IO_ERR': '⚠️ 飞牛NAS-磁盘IO错误告警',
         'TEST_PUSH': '🧪 飞牛NAS-测试推送',
         'DND_SUMMARY': '📋 飞牛NAS-勿扰时段汇总',
+        # 可选事件（默认不推送）
+        'ARCHIVING_SUCCESS': '📦 飞牛NAS-归档成功',
+        'DeleteFile': '🗑️ 飞牛NAS-文件删除',
+        'MovetoTrashbin': '🗑️ 飞牛NAS-移到回收站',
+        'SHARE_EVENTID_DEL': '📤 飞牛NAS-共享删除',
+        'SHARE_EVENTID_PUT': '📤 飞牛NAS-共享添加/更新',
+        'WEBDAV_ENABLED': '🌐 飞牛NAS-WebDAV已启用',
+        'WEBDAV_DISABLED': '🛑 飞牛NAS-WebDAV已关闭',
+        'SAMBA_ENABLED': '📂 飞牛NAS-Samba已启用',
+        'SAMBA_DISABLED': '🛑 飞牛NAS-Samba已关闭',
+        'FW_ENABLE': '🔥 飞牛NAS-防火墙已开启',
+        'FW_DISABLE': '🔥 飞牛NAS-防火墙已关闭',
+        'SECURITY_PORTCHANGED': '🔒 飞牛NAS-安全/端口变更',
     }
     
     # Bark事件标题映射 - 用于Bark推送，标题统一为"飞牛NAS通知"
@@ -128,6 +141,18 @@ class MultiPlatformNotifier:
         'DISK_IO_ERR': '磁盘{dev}发生IO错误，错误次数{err_cnt}',
         'TEST_PUSH': '测试推送',
         'DND_SUMMARY': '勿扰时段事件汇总',
+        'ARCHIVING_SUCCESS': '归档成功',
+        'DeleteFile': '文件删除',
+        'MovetoTrashbin': '移到回收站',
+        'SHARE_EVENTID_DEL': '共享删除',
+        'SHARE_EVENTID_PUT': '共享添加/更新',
+        'WEBDAV_ENABLED': 'WebDAV已启用',
+        'WEBDAV_DISABLED': 'WebDAV已关闭',
+        'SAMBA_ENABLED': 'Samba已启用',
+        'SAMBA_DISABLED': 'Samba已关闭',
+        'FW_ENABLE': '防火墙已开启',
+        'FW_DISABLE': '防火墙已关闭',
+        'SECURITY_PORTCHANGED': '安全/端口变更',
     }
     
     # 事件备注
@@ -165,6 +190,18 @@ class MultiPlatformNotifier:
         'APP_UNINSTALLED': '🗑️ 应用已卸载。',
         'DISK_IO_ERR': '⚠️ 磁盘发生IO错误，请检查硬盘健康与连接。',
         'TEST_PUSH': '🧪 Web 配置页发送的测试消息。',
+        'ARCHIVING_SUCCESS': '📦 系统完成归档任务。',
+        'DeleteFile': '🗑️ 文件已被删除。',
+        'MovetoTrashbin': '🗑️ 文件已移至回收站。',
+        'SHARE_EVENTID_DEL': '📤 共享已删除。',
+        'SHARE_EVENTID_PUT': '📤 共享已添加或更新。',
+        'WEBDAV_ENABLED': '🌐 WebDAV 服务已启用。',
+        'WEBDAV_DISABLED': '🛑 WebDAV 服务已关闭。',
+        'SAMBA_ENABLED': '📂 Samba 服务已启用。',
+        'SAMBA_DISABLED': '🛑 Samba 服务已关闭。',
+        'FW_ENABLE': '🔥 防火墙已开启。',
+        'FW_DISABLE': '🔥 防火墙已关闭。',
+        'SECURITY_PORTCHANGED': '🔒 安全或端口设置已变更。',
     }
     
     def __init__(self, 
@@ -316,8 +353,8 @@ class MultiPlatformNotifier:
                 if self._stop_flag:
                     break
     
-    def _send_merged_disk_event(self, event_type: str, event_list: List[Dict], time_window: int):
-        """发送合并的磁盘事件"""
+    def _send_merged_disk_event(self, event_type: str, event_list: List[Dict], time_window: int = 0):
+        """发送合并的磁盘事件。event_list 为磁盘信息列表，每项含 disk/model/serial 等字段。"""
         if not event_list:
             return
             
@@ -387,6 +424,11 @@ class MultiPlatformNotifier:
         """
         # 特殊处理磁盘事件的合并
         if event_type in ['DiskWakeup', 'DiskSpindown']:
+            # 若已是 event_processor 合并后的数据（含 merged_disks 列表），直接发送，避免被 notifier 再次“按条”合并导致内容丢失
+            merged_disks = event_data.get('merged_disks') if isinstance(event_data.get('merged_disks'), list) else None
+            if merged_disks:
+                self._send_merged_disk_event(event_type, merged_disks, 0)
+                return True
             return self._handle_disk_event(event_type, event_data, raw_log, timestamp)
         
         # 生成事件指纹（用于去重）
@@ -583,6 +625,13 @@ class MultiPlatformNotifier:
             dev = data.get('DEV', data.get('dev', 'unknown'))
             minute_window = int(time.time() / 60)
             key = f"disk_io_err_{dev}_{minute_window}"
+        elif event_type in {
+            'ARCHIVING_SUCCESS', 'DeleteFile', 'MovetoTrashbin', 'SHARE_EVENTID_DEL', 'SHARE_EVENTID_PUT',
+            'WEBDAV_ENABLED', 'WEBDAV_DISABLED', 'SAMBA_ENABLED', 'SAMBA_DISABLED',
+            'FW_ENABLE', 'FW_DISABLE', 'SECURITY_PORTCHANGED',
+        }:
+            minute_window = int(time.time() / 60)
+            key = f"{event_type}_{minute_window}"
         else:
             # 登录/退出：按用户、IP和时间（分钟）去重
             user = event_data.get('user', 'unknown')
@@ -676,6 +725,12 @@ class MultiPlatformNotifier:
                 content += '\n' + self._build_merged_disk_spindown_content(single_disk_as_merged)
         elif event_type == 'DISK_IO_ERR':
             content += '\n' + self._build_disk_io_err_content(event_data)
+        elif event_type in {
+            'ARCHIVING_SUCCESS', 'DeleteFile', 'MovetoTrashbin', 'SHARE_EVENTID_DEL', 'SHARE_EVENTID_PUT',
+            'WEBDAV_ENABLED', 'WEBDAV_DISABLED', 'SAMBA_ENABLED', 'SAMBA_DISABLED',
+            'FW_ENABLE', 'FW_DISABLE', 'SECURITY_PORTCHANGED',
+        }:
+            content += '\n' + self._build_simple_content(event_data)
         
         # 添加备注（去掉尾部多余换行，避免与备注之间出现空行）
         note = self.EVENT_NOTES.get(event_type, '')
@@ -718,6 +773,23 @@ class MultiPlatformNotifier:
             content += f"🔢 序列号: {serial}\n"
         
         return content
+
+    def _build_simple_content(self, event_data: Dict[str, Any]) -> str:
+        """可选事件通用内容：展示操作用户、来源等（parameter 中 data.USER_NAME、from 等）。"""
+        content = ""
+        data = event_data.get('data', {}) or {}
+        user = event_data.get('user') or data.get('USER_NAME', data.get('user', ''))
+        if user:
+            content += f"👤 操作用户: {user}\n"
+        from_src = event_data.get('from', '')
+        if from_src:
+            content += f"📦 来源: {from_src}\n"
+        for key in ('path', 'PATH', 'name', 'share_name', 'SHARE_NAME'):
+            val = event_data.get(key) or data.get(key)
+            if val:
+                content += f"📁 {key}: {val}\n"
+                break
+        return content or "（无额外详情）"
 
     def _build_disk_io_err_content(self, event_data: Dict[str, Any]) -> str:
         """构建磁盘IO错误事件内容（data: DEV, SN, MODEL, ERR_CNT）"""
@@ -1022,11 +1094,9 @@ class MultiPlatformNotifier:
     
     def _build_bark_message(self, event_type: str, event_data: Dict[str, Any], 
                            timestamp: str, raw_log: str) -> MultiPlatformMessage:
-        """构建Bark消息，内容与其他渠道一致"""
+        """构建Bark消息。标题通过 URL 单独传，正文不再重复包含标题，避免推送时标题显示两次。"""
         message = self._build_message(event_type, event_data, timestamp, raw_log)
-        # Bark正文第一行包含标题
-        merged_content = f"{message.title}\n\n{message.content}"
-        return MultiPlatformMessage(title=message.title, content=merged_content)
+        return MultiPlatformMessage(title=message.title, content=message.content)
     
     def send_system_notification(self, event_type: str, message: str, additional_info: Dict[str, Any] = None):
         """
@@ -1056,7 +1126,7 @@ class MultiPlatformNotifier:
         # 检查去重
         if self._is_duplicate(event_fingerprint):
             self.logger.debug(f"跳过重复系统事件: {event_type}")
-            return False
+            return {"success": False, "success_count": 0, "fail_count": 0}
         
         # 构建消息
         title = self.EVENT_TITLES.get(event_type, f"📋 飞牛NAS-系统事件: {event_type}")

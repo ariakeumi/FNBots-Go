@@ -300,11 +300,20 @@ class LogStorage:
             week_ago = datetime.now() - timedelta(days=7)
             day_ago = datetime.now() - timedelta(days=1)
             
-            # 遍历所有日志文件
+            # 遍历所有日志文件（文件名格式: EventType_YYYY-MM-DD.log，事件类型可含下划线如 APP_CRASH）
             for log_file in self.storage_dir.glob("*.log"):
                 if log_file.exists():
-                    # 从文件名提取事件类型
-                    event_type = log_file.stem.split('_')[0] if '_' in log_file.stem else 'unknown'
+                    stem = log_file.stem
+                    event_type = "unknown"
+                    if "_" in stem:
+                        # 最后一段为日期 YYYY-MM-DD 则前面为事件类型
+                        parts = stem.rsplit("_", 1)
+                        if len(parts) == 2 and len(parts[1]) == 10 and parts[1][4] == "-" and parts[1][7] == "-":
+                            event_type = parts[0]
+                        else:
+                            event_type = stem.split("_")[0]
+                    elif stem:
+                        event_type = stem
                     
                     with open(log_file, 'r', encoding='utf-8') as f:
                         file_count = 0

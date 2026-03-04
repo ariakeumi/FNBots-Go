@@ -67,6 +67,7 @@ class ConnectionPool:
         # 统计信息
         self.stats = PoolStats()
         self.stats_lock = threading.Lock()
+        self._session_headers_lock = threading.Lock()
         
         # 日志
         self.logger = logging.getLogger(__name__)
@@ -183,19 +184,20 @@ class ConnectionPool:
             self.stats.total_requests += 1
         
         try:
-            # 临时移除Content-Type头部以避免影响GET请求
-            original_content_type = self.session.headers.get('Content-Type')
-            if original_content_type:
-                del self.session.headers['Content-Type']
-            
-            response = self.session.get(
-                url,
-                timeout=self.timeout
-            )
-            
-            # 恢复Content-Type头部
-            if original_content_type:
-                self.session.headers['Content-Type'] = original_content_type
+            # 临时移除 Content-Type 以免 GET 请求误带；用锁保护避免多线程并发修改 session.headers
+            with self._session_headers_lock:
+                original_content_type = self.session.headers.get('Content-Type')
+                if original_content_type:
+                    del self.session.headers['Content-Type']
+            try:
+                response = self.session.get(
+                    url,
+                    timeout=self.timeout
+                )
+            finally:
+                with self._session_headers_lock:
+                    if original_content_type:
+                        self.session.headers['Content-Type'] = original_content_type
             
             if response.status_code < 400:
                 with self.stats_lock:

@@ -66,18 +66,25 @@ def _join_urls(urls):
 EVENT_CATEGORIES = [
     ("login", "登录与认证", ["LoginSucc", "LoginSucc2FA1", "LoginFail", "Logout"]),
     ("ssh", "SSH", ["SSH_INVALID_USER", "SSH_AUTH_FAILED", "SSH_LOGIN_SUCCESS", "SSH_DISCONNECTED"]),
+    ("security", "安全", [
+        "FW_ENABLE", "FW_DISABLE", "SECURITY_PORTCHANGED",
+    ]),
+    ("hardware", "硬件与告警", ["CPU_USAGE_ALARM", "CPU_USAGE_RESTORED", "CPU_TEMPERATURE_ALARM"]),
     ("disk", "磁盘与存储", ["FoundDisk", "DiskWakeup", "DiskSpindown", "DISK_IO_ERR"]),
-    ("app_fault", "应用异常", [
+    ("ups", "UPS", ["UPS_ENABLE", "UPS_DISABLE", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE"]),
+    ("share_protocol", "共享协议", [
+        "WEBDAV_ENABLED", "WEBDAV_DISABLED", "SAMBA_ENABLED", "SAMBA_DISABLED",
+    ]),
+    ("app_manage", "应用管理", [
         "APP_CRASH", "APP_UPDATE_FAILED",
         "APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION",
         "APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE",
-    ]),
-    ("app_lifecycle", "应用生命周期", [
         "APP_STARTED", "APP_STOPPED", "APP_UPDATED",
         "APP_INSTALLED", "APP_AUTO_STARTED", "APP_UNINSTALLED",
     ]),
-    ("hardware", "硬件与告警", ["CPU_USAGE_ALARM", "CPU_USAGE_RESTORED", "CPU_TEMPERATURE_ALARM"]),
-    ("ups", "UPS", ["UPS_ENABLE", "UPS_DISABLE", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE"]),
+    ("file_ops", "文件操作", [
+        "ARCHIVING_SUCCESS", "DeleteFile", "MovetoTrashbin", "SHARE_EVENTID_DEL", "SHARE_EVENTID_PUT",
+    ]),
 ]
 # 不在 UI 中提供选择（内部使用的系统事件）
 EVENT_IDS_HIDDEN_IN_UI = {"APP_START", "APP_STOP"}
@@ -102,6 +109,9 @@ VALID_EVENT_IDS = frozenset({
     "CPU_USAGE_ALARM", "CPU_USAGE_RESTORED", "CPU_TEMPERATURE_ALARM",
     "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE", "UPS_ENABLE", "UPS_DISABLE",
     "DiskWakeup", "DiskSpindown", "DISK_IO_ERR",
+    "ARCHIVING_SUCCESS", "DeleteFile", "MovetoTrashbin", "SHARE_EVENTID_DEL", "SHARE_EVENTID_PUT",
+    "WEBDAV_ENABLED", "WEBDAV_DISABLED", "SAMBA_ENABLED", "SAMBA_DISABLED",
+    "FW_ENABLE", "FW_DISABLE", "SECURITY_PORTCHANGED",
 })
 
 # 默认勾选的事件（不含应用生命周期 6 项；应用启动/自启动失败、UPS 开启/关闭 默认不勾选）
@@ -209,7 +219,7 @@ def create_app(on_config_saved=None) -> Flask:
         data = {
             "title": "FnMessageBots",
             "subtitle": "飞牛日志消息推送机器人",
-            "version": "dev_2.0.1",
+            "version": "2.0.2",
             "events_by_category": events_by_category,
             "selected_events": monitor_events,
             "channels": channels,
@@ -361,7 +371,7 @@ def create_app(on_config_saved=None) -> Flask:
             content,
             {
                 "hostname": socket.gethostname(),
-                "version": "2.0.1",
+                "version": "2.0.2",
             },
         )
         ok = out.get("success", False) if isinstance(out, dict) else bool(out)
@@ -505,11 +515,14 @@ def create_app(on_config_saved=None) -> Flask:
       color: #9ca3af;
     }
     .events-by-category { max-height: 420px; overflow: auto; padding-right: 4px; }
-    .event-category { margin-bottom: 14px; }
+    .event-category { margin-bottom: 22px; }
     .event-category-title {
-      font-size: 13px; font-weight: 600; color: #374151;
-      margin-bottom: 6px; padding-bottom: 4px;
+      font-size: 15px; font-weight: 650; color: #111827;
+      margin-bottom: 8px; padding-bottom: 4px;
       border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     .events-grid {
       display: grid;
@@ -669,6 +682,11 @@ def create_app(on_config_saved=None) -> Flask:
       font-size: 11px;
       color: #9ca3af;
       margin-top: 2px;
+      /* 推送事件副标题：最多展示两行，超出打点省略 */
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
     .test-section {
       margin-top: 20px;
@@ -748,7 +766,7 @@ def create_app(on_config_saved=None) -> Flask:
       <div class="header">
         <div class="header-title" id="app-title">FnMessageBots</div>
         <div class="header-sub" id="app-subtitle">飞牛日志消息推送机器人</div>
-        <div class="header-ver" id="app-version">dev_2.0.1</div>
+        <div class="header-ver" id="app-version">2.0.2</div>
       </div>
 
       <div class="section stats-section">
@@ -953,12 +971,41 @@ def create_app(on_config_saved=None) -> Flask:
         for (const cat of categories) {
           const catBlock = document.createElement("div");
           catBlock.className = "event-category";
-          const catTitle = document.createElement("div");
-          catTitle.className = "event-category-title";
-          catTitle.textContent = cat.name || "";
-          catBlock.appendChild(catTitle);
+
+          // 分类标题 + 全选
+          const catHeader = document.createElement("div");
+          catHeader.className = "event-category-title";
+          const catTitleSpan = document.createElement("span");
+          catTitleSpan.textContent = cat.name || "";
+          catHeader.appendChild(catTitleSpan);
+
+          const catToggleLabel = document.createElement("label");
+          catToggleLabel.style.fontSize = "13px";
+          catToggleLabel.style.cursor = "pointer";
+          catToggleLabel.style.flexShrink = "0";
+          const catToggle = document.createElement("input");
+          catToggle.type = "checkbox";
+          catToggle.style.marginRight = "4px";
+          catToggleLabel.appendChild(catToggle);
+          const catToggleText = document.createElement("span");
+          catToggleText.textContent = "全选";
+          catToggleLabel.appendChild(catToggleText);
+          catHeader.appendChild(catToggleLabel);
+
+          catBlock.appendChild(catHeader);
+
           const grid = document.createElement("div");
           grid.className = "events-grid";
+
+          function updateCatToggle() {
+            const boxes = grid.querySelectorAll("input[type=checkbox]");
+            if (!boxes.length) {
+              catToggle.checked = false;
+              return;
+            }
+            catToggle.checked = Array.from(boxes).every(b => b.checked);
+          }
+
           for (const ev of cat.events || []) {
             const div = document.createElement("div");
             div.className = "event-item";
@@ -966,6 +1013,11 @@ def create_app(on_config_saved=None) -> Flask:
             cb.type = "checkbox";
             cb.value = ev.id;
             if (selected.has(ev.id)) cb.checked = true;
+
+            cb.addEventListener("change", () => {
+              updateCatToggle();
+            });
+
             const label = document.createElement("div");
             const title = document.createElement("span");
             title.textContent = ev.title || ev.id;
@@ -980,6 +1032,16 @@ def create_app(on_config_saved=None) -> Flask:
             div.appendChild(label);
             grid.appendChild(div);
           }
+
+          // 分类全选/反选：用 change 事件，让复选框先自然切换，再根据其新状态同步子项
+          catToggle.addEventListener("change", () => {
+            const boxes = grid.querySelectorAll("input[type=checkbox]");
+            const target = catToggle.checked;
+            boxes.forEach(b => { b.checked = target; });
+          });
+
+          updateCatToggle();
+
           catBlock.appendChild(grid);
           eventsContainer.appendChild(catBlock);
         }
