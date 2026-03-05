@@ -267,6 +267,7 @@ class Config:
                         "DISK_IO_ERR",
                         "ARCHIVING_SUCCESS", "DeleteFile", "MovetoTrashbin", "SHARE_EVENTID_DEL", "SHARE_EVENTID_PUT",
                         "WEBDAV_ENABLED", "WEBDAV_DISABLED", "SAMBA_ENABLED", "SAMBA_DISABLED",
+                        "DLNA_ENABLED", "DLNA_DISABLED", "FTP_ENABLED", "FTP_DISABLED", "NFS_ENABLED", "NFS_DISABLED",
                         "FW_ENABLE", "FW_DISABLE", "SECURITY_PORTCHANGED"}
         for event in self.monitor_events:
             if event not in valid_events:

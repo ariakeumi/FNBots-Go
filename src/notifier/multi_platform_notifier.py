@@ -100,6 +100,12 @@ class MultiPlatformNotifier:
         'WEBDAV_DISABLED': '🛑 飞牛NAS-WebDAV已关闭',
         'SAMBA_ENABLED': '📂 飞牛NAS-Samba已启用',
         'SAMBA_DISABLED': '🛑 飞牛NAS-Samba已关闭',
+        'DLNA_ENABLED': '📺 飞牛NAS-DLNA已启用',
+        'DLNA_DISABLED': '🛑 飞牛NAS-DLNA已关闭',
+        'FTP_ENABLED': '📁 飞牛NAS-FTP已启用',
+        'FTP_DISABLED': '🛑 飞牛NAS-FTP已关闭',
+        'NFS_ENABLED': '📂 飞牛NAS-NFS已启用',
+        'NFS_DISABLED': '🛑 飞牛NAS-NFS已关闭',
         'FW_ENABLE': '🔥 飞牛NAS-防火墙已开启',
         'FW_DISABLE': '🔥 飞牛NAS-防火墙已关闭',
         'SECURITY_PORTCHANGED': '🔒 飞牛NAS-安全/端口变更',
@@ -150,6 +156,12 @@ class MultiPlatformNotifier:
         'WEBDAV_DISABLED': 'WebDAV已关闭',
         'SAMBA_ENABLED': 'Samba已启用',
         'SAMBA_DISABLED': 'Samba已关闭',
+        'DLNA_ENABLED': 'DLNA已启用',
+        'DLNA_DISABLED': 'DLNA已关闭',
+        'FTP_ENABLED': 'FTP已启用',
+        'FTP_DISABLED': 'FTP已关闭',
+        'NFS_ENABLED': 'NFS已启用',
+        'NFS_DISABLED': 'NFS已关闭',
         'FW_ENABLE': '防火墙已开启',
         'FW_DISABLE': '防火墙已关闭',
         'SECURITY_PORTCHANGED': '安全/端口变更',
@@ -199,6 +211,12 @@ class MultiPlatformNotifier:
         'WEBDAV_DISABLED': '🛑 WebDAV 服务已关闭。',
         'SAMBA_ENABLED': '📂 Samba 服务已启用。',
         'SAMBA_DISABLED': '🛑 Samba 服务已关闭。',
+        'DLNA_ENABLED': '📺 DLNA 服务已启用。',
+        'DLNA_DISABLED': '🛑 DLNA 服务已关闭。',
+        'FTP_ENABLED': '📁 FTP 服务已启用。',
+        'FTP_DISABLED': '🛑 FTP 服务已关闭。',
+        'NFS_ENABLED': '📂 NFS 服务已启用。',
+        'NFS_DISABLED': '🛑 NFS 服务已关闭。',
         'FW_ENABLE': '🔥 防火墙已开启。',
         'FW_DISABLE': '🔥 防火墙已关闭。',
         'SECURITY_PORTCHANGED': '🔒 安全或端口设置已变更。',
@@ -629,6 +647,7 @@ class MultiPlatformNotifier:
         elif event_type in {
             'ARCHIVING_SUCCESS', 'DeleteFile', 'MovetoTrashbin', 'SHARE_EVENTID_DEL', 'SHARE_EVENTID_PUT',
             'WEBDAV_ENABLED', 'WEBDAV_DISABLED', 'SAMBA_ENABLED', 'SAMBA_DISABLED',
+            'DLNA_ENABLED', 'DLNA_DISABLED', 'FTP_ENABLED', 'FTP_DISABLED', 'NFS_ENABLED', 'NFS_DISABLED',
             'FW_ENABLE', 'FW_DISABLE', 'SECURITY_PORTCHANGED',
         }:
             minute_window = int(time.time() / 60)
@@ -729,6 +748,7 @@ class MultiPlatformNotifier:
         elif event_type in {
             'ARCHIVING_SUCCESS', 'DeleteFile', 'MovetoTrashbin', 'SHARE_EVENTID_DEL', 'SHARE_EVENTID_PUT',
             'WEBDAV_ENABLED', 'WEBDAV_DISABLED', 'SAMBA_ENABLED', 'SAMBA_DISABLED',
+            'DLNA_ENABLED', 'DLNA_DISABLED', 'FTP_ENABLED', 'FTP_DISABLED', 'NFS_ENABLED', 'NFS_DISABLED',
             'FW_ENABLE', 'FW_DISABLE', 'SECURITY_PORTCHANGED',
         }:
             content += '\n' + self._build_simple_content(event_data)

@@ -74,6 +74,7 @@ EVENT_CATEGORIES = [
     ("ups", "UPS", ["UPS_ENABLE", "UPS_DISABLE", "UPS_ONBATT", "UPS_ONBATT_LOWBATT", "UPS_ONLINE"]),
     ("share_protocol", "共享协议", [
         "WEBDAV_ENABLED", "WEBDAV_DISABLED", "SAMBA_ENABLED", "SAMBA_DISABLED",
+        "DLNA_ENABLED", "DLNA_DISABLED", "FTP_ENABLED", "FTP_DISABLED", "NFS_ENABLED", "NFS_DISABLED",
     ]),
     ("app_manage", "应用管理", [
         "APP_CRASH", "APP_UPDATE_FAILED",
@@ -111,6 +112,7 @@ VALID_EVENT_IDS = frozenset({
     "DiskWakeup", "DiskSpindown", "DISK_IO_ERR",
     "ARCHIVING_SUCCESS", "DeleteFile", "MovetoTrashbin", "SHARE_EVENTID_DEL", "SHARE_EVENTID_PUT",
     "WEBDAV_ENABLED", "WEBDAV_DISABLED", "SAMBA_ENABLED", "SAMBA_DISABLED",
+    "DLNA_ENABLED", "DLNA_DISABLED", "FTP_ENABLED", "FTP_DISABLED", "NFS_ENABLED", "NFS_DISABLED",
     "FW_ENABLE", "FW_DISABLE", "SECURITY_PORTCHANGED",
 })
 
@@ -526,22 +528,36 @@ def create_app(on_config_saved=None) -> Flask:
     }
     .events-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-      gap: 6px 12px;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px 14px;
       padding-right: 4px;
     }
     .event-item {
       font-size: 13px;
       display: flex;
       align-items: flex-start;
-      gap: 6px;
+      gap: 8px;
       color: #374151;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      background: #fafafa;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .event-item:hover {
+      background: #f3f4f6;
+      border-color: #d1d5db;
     }
     .event-item input {
       margin-top: 3px;
+      flex-shrink: 0;
     }
     .event-item span {
-      line-height: 1.35;
+      line-height: 1.4;
+    }
+    .event-item .field-helper {
+      margin-top: 4px;
+      margin-bottom: 0;
     }
     .tag {
       display: inline-flex;
