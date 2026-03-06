@@ -39,5 +39,5 @@
   "dnd_enabled": false,
   "dnd_start_time": "22:00",
   "dnd_end_time": "07:00",
-  "pushplus_params": "{\n  \"token\": \"ac6329b38e5b4c70a51ec85f4ad95a00\",\n  \"title\": \"{title}\",\n  \"content\": \"\",\n  \"topic\": \"01\",\n  \"template\": \"html\",\n  \"channel\": \"wechat\"\n}"
+  "pushplus_params": ""
 }
