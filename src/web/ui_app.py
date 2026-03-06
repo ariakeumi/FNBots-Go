@@ -1116,12 +1116,14 @@ def create_app(on_config_saved=None) -> Flask:
         <div class="section-title">
           <span>系统设置 <small>影响日志缓存与数据库轮询行为</small></span>
         </div>
-        <div class="field-label" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-          <input type="checkbox" id="input-web-password-enabled" />
-          <span>开启密码验证</span>
+        <div>
+          <div class="field-label" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <input type="checkbox" id="input-web-password-enabled" />
+            <span>开启密码验证</span>
+          </div>
+          <div class="field-helper">默认开启。关闭后无需输入密码即可访问配置页，本地密码仍保留，可随时重新开启。</div>
         </div>
-        <div class="field-helper" style="margin-bottom: 16px;">默认开启。关闭后无需输入密码即可访问配置页，本地密码仍保留，可随时重新开启。</div>
-        <div class="system-grid">
+        <div class="system-grid" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
           <div>
             <div class="field-label">日志缓存天数 (day)</div>
             <input id="input-log-days" type="number" min="1" />
