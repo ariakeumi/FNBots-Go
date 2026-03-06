@@ -17,7 +17,8 @@ class Config:
     dingtalk_webhook_url: str = ""  # 钉钉Webhook URL
     feishu_webhook_url: str = ""   # 飞书Webhook URL
     bark_url: str = ""  # Bark推送URL
-    
+    pushplus_params: str = ""  # PushPlus 推送参数（JSON 字符串，多个用 | 分隔）
+
     # 监控配置
     monitor_events: List[str] = field(default_factory=lambda: [
         "LoginSucc", "LoginSucc2FA1", "LoginFail", "Logout", "FoundDisk", "APP_CRASH",
@@ -130,6 +131,8 @@ class Config:
             self.feishu_webhook_url = data["feishu_webhook_url"]
         if "bark_url" in data and isinstance(data["bark_url"], str):
             self.bark_url = data["bark_url"]
+        if "pushplus_params" in data and isinstance(data["pushplus_params"], str):
+            self.pushplus_params = data["pushplus_params"]
         if "log_retention_days" in data and data["log_retention_days"] is not None:
             try:
                 self.log_retention_days = int(data["log_retention_days"])
@@ -250,7 +253,17 @@ class Config:
         
         if self.bark_url and not self.bark_url.startswith('http'):
             raise ValueError("BARK_URL 必须是有效的URL")
-        
+
+        # pushplus_params 为 JSON 或 JSON|JSON...，发送时再校验
+        if self.pushplus_params:
+            for part in (p.strip() for p in self.pushplus_params.split('|') if p.strip()):
+                try:
+                    obj = json.loads(part)
+                    if not isinstance(obj, dict) or 'token' not in obj:
+                        raise ValueError("PushPlus 参数必须为包含 token 的 JSON 对象")
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"PushPlus 参数不是合法 JSON: {e}")
+
         if not self.monitor_events:
             raise ValueError("必须配置至少一个监控事件")
         

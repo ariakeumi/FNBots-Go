@@ -177,6 +177,7 @@ def create_app(on_config_saved=None) -> Flask:
         {"id": "dingtalk", "name": "钉钉"},
         {"id": "feishu", "name": "飞书"},
         {"id": "bark", "name": "Bark"},
+        {"id": "pushplus", "name": "PushPlus"},
     ]
 
     @app.get("/api/config")
@@ -211,6 +212,7 @@ def create_app(on_config_saved=None) -> Flask:
             ("dingtalk", "dingtalk_webhook_url"),
             ("feishu", "feishu_webhook_url"),
             ("bark", "bark_url"),
+            ("pushplus", "pushplus_params"),
         ]:
             for url in _split_urls(raw.get(key, "")):
                 # 过滤掉模板中的 ${WECHAT_WEBHOOK_URL} 这类占位符
@@ -274,11 +276,18 @@ def create_app(on_config_saved=None) -> Flask:
         for ch in channels:
             ch_type = ch.get("type")
             url = (ch.get("url") or "").strip()
-            if ch_type not in {"wechat", "dingtalk", "feishu", "bark"}:
+            if ch_type not in {"wechat", "dingtalk", "feishu", "bark", "pushplus"}:
                 return jsonify({"ok": False, "message": "存在未知的推送渠道类型。"}), 400
             if not url:
                 return jsonify({"ok": False, "message": "推送渠道地址不能为空。"}), 400
-            if not url.startswith("http"):
+            if ch_type == "pushplus":
+                try:
+                    obj = json.loads(url)
+                    if not isinstance(obj, dict) or "token" not in obj:
+                        return jsonify({"ok": False, "message": "PushPlus 参数必须是包含 token 的 JSON 对象。"}), 400
+                except json.JSONDecodeError as e:
+                    return jsonify({"ok": False, "message": f"PushPlus 参数不是合法 JSON：{e}"}), 400
+            elif not url.startswith("http"):
                 return (
                     jsonify({"ok": False, "message": f"推送地址格式不正确：{url}"}),
                     400,
@@ -306,6 +315,7 @@ def create_app(on_config_saved=None) -> Flask:
         dingtalk_urls = []
         feishu_urls = []
         bark_urls = []
+        pushplus_urls = []
         for ch in channels:
             ch_type = ch.get("type")
             url = (ch.get("url") or "").strip()
@@ -317,6 +327,8 @@ def create_app(on_config_saved=None) -> Flask:
                 feishu_urls.append(url)
             elif ch_type == "bark":
                 bark_urls.append(url)
+            elif ch_type == "pushplus":
+                pushplus_urls.append(url)
 
         raw = _load_raw_config()
         raw.update(
@@ -325,6 +337,7 @@ def create_app(on_config_saved=None) -> Flask:
                 "dingtalk_webhook_url": _join_urls(dingtalk_urls),
                 "feishu_webhook_url": _join_urls(feishu_urls),
                 "bark_url": _join_urls(bark_urls),
+                "pushplus_params": _join_urls(pushplus_urls),
                 "monitor_events": events,
                 "log_retention_days": log_retention_days,
                 "logger_poll_interval": logger_poll_interval,
@@ -362,6 +375,7 @@ def create_app(on_config_saved=None) -> Flask:
             dingtalk_webhook_url=raw.get("dingtalk_webhook_url", ""),
             feishu_webhook_url=raw.get("feishu_webhook_url", ""),
             bark_url=raw.get("bark_url", ""),
+            pushplus_params=raw.get("pushplus_params", ""),
             dedup_window=int(raw.get("dedup_window", 300)),
             pool_size=int(raw.get("http_pool_size", 10)),
             retries=int(raw.get("http_retry_count", 3)),
@@ -829,7 +843,7 @@ def create_app(on_config_saved=None) -> Flask:
           <thead>
           <tr>
             <th style="width: 120px;">渠道类型</th>
-            <th>推送地址（Webhook / Bark URL）</th>
+            <th>推送地址（Webhook / Bark URL）或 PushPlus 参数（JSON）</th>
             <th style="width: 64px; text-align: right;">操作</th>
           </tr>
           </thead>
@@ -926,6 +940,8 @@ def create_app(on_config_saved=None) -> Flask:
       }, 3200);
     }
 
+    const PUSHPLUS_PLACEHOLDER = '{"token":"你的token","title":"{title}","content":"消息内容","template":"html","channel":"wechat"}';
+
     function createChannelRow(chType, url) {
       const tr = document.createElement("tr");
 
@@ -941,11 +957,30 @@ def create_app(on_config_saved=None) -> Flask:
       tdType.appendChild(sel);
 
       const tdUrl = document.createElement("td");
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.value = url || "";
-      inp.placeholder = "例如：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...";
-      tdUrl.appendChild(inp);
+      function setUrlWidget(isPushPlus, val) {
+        tdUrl.innerHTML = "";
+        if (isPushPlus) {
+          const ta = document.createElement("textarea");
+          ta.rows = 3;
+          ta.placeholder = PUSHPLUS_PLACEHOLDER;
+          ta.value = val || "";
+          ta.style.minHeight = "60px";
+          tdUrl.appendChild(ta);
+        } else {
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.placeholder = "例如：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...";
+          inp.value = val || "";
+          tdUrl.appendChild(inp);
+        }
+      }
+      setUrlWidget(chType === "pushplus", url || "");
+
+      sel.addEventListener("change", function() {
+        const prev = tdUrl.querySelector("input[type=text], textarea");
+        const prevVal = prev ? prev.value : "";
+        setUrlWidget(sel.value === "pushplus", prevVal);
+      });
 
       const tdOp = document.createElement("td");
       tdOp.style.textAlign = "right";
@@ -1128,8 +1163,10 @@ def create_app(on_config_saved=None) -> Flask:
       channelsBody.querySelectorAll("tr").forEach(tr => {
         const sel = tr.querySelector("select");
         const inp = tr.querySelector("input[type=text]");
-        if (!sel || !inp) return;
-        const url = inp.value.trim();
+        const ta = tr.querySelector("textarea");
+        const urlEl = inp || ta;
+        if (!sel || !urlEl) return;
+        const url = urlEl.value.trim();
         const type = sel.value;
         if (!url) return;
         channels.push({ type, url });

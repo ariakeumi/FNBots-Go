@@ -43,6 +43,7 @@ class UnifiedNotifier:
             dingtalk_webhook_url=config.dingtalk_webhook_url,
             feishu_webhook_url=config.feishu_webhook_url,
             bark_url=config.bark_url,
+            pushplus_params=config.pushplus_params,
             dedup_window=config.dedup_window,
             pool_size=config.http_pool_size,
             retries=config.http_retry_count,
@@ -58,6 +59,7 @@ class UnifiedNotifier:
             dingtalk_webhook_url=self.config.dingtalk_webhook_url,
             feishu_webhook_url=self.config.feishu_webhook_url,
             bark_url=self.config.bark_url,
+            pushplus_params=self.config.pushplus_params,
             dedup_window=self.config.dedup_window,
             pool_size=self.config.http_pool_size,
             retries=self.config.http_retry_count,
@@ -196,6 +198,8 @@ class UnifiedNotifier:
             active_platforms.append('feishu')
         if self.config.bark_url:
             active_platforms.append('bark')
+        if self.config.pushplus_params:
+            active_platforms.append('pushplus')
         
         if len(active_platforms) == 0:
             method = 'none'
@@ -255,6 +259,8 @@ class UnifiedNotifier:
             active_platforms.append('feishu')
         if self.config.bark_url:
             active_platforms.append('bark')
+        if self.config.pushplus_params:
+            active_platforms.append('pushplus')
         
         if len(active_platforms) == 0:
             method = 'none'
@@ -303,7 +309,8 @@ class UnifiedNotifier:
                 'wechat': False,
                 'dingtalk': False,
                 'feishu': False,
-                'bark': False
+                'bark': False,
+                'pushplus': False,
             }
         }
     

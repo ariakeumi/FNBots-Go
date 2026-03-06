@@ -3,6 +3,7 @@
 支持企业微信、钉钉和飞书的WebHook通知
 """
 
+import json
 import time
 import logging
 import hashlib
@@ -13,6 +14,9 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from .connection_pool import ConnectionPool
+
+# PushPlus 固定接口地址
+PUSHPLUS_URL = "http://www.pushplus.plus/send"
 
 
 @dataclass
@@ -227,6 +231,7 @@ class MultiPlatformNotifier:
                  dingtalk_webhook_url: str = "",
                  feishu_webhook_url: str = "",
                  bark_url: str = "",
+                 pushplus_params: str = "",
                  dedup_window: int = 300,
                  pool_size: int = 10,
                  retries: int = 3,
@@ -239,6 +244,7 @@ class MultiPlatformNotifier:
             dingtalk_webhook_url: 钉钉Webhook URL
             feishu_webhook_url: 飞书Webhook URL
             bark_url: Bark推送URL
+            pushplus_params: PushPlus 参数（JSON 字符串，多个用 | 分隔）
             dedup_window: 去重时间窗口（秒）
             pool_size: 连接池大小
             retries: 重试次数
@@ -248,6 +254,7 @@ class MultiPlatformNotifier:
         self.dingtalk_webhook_url = dingtalk_webhook_url
         self.feishu_webhook_url = feishu_webhook_url
         self.bark_url = bark_url
+        self.pushplus_params = pushplus_params or ""
         self.dedup_window = dedup_window
         
         # 连接池
@@ -292,6 +299,8 @@ class MultiPlatformNotifier:
             platforms.append('飞书')
         if self.bark_url:
             platforms.append('Bark')
+        if self.pushplus_params:
+            platforms.append('PushPlus')
         
         self.logger.info(f"多平台通知器初始化完成，支持平台: {', '.join(platforms) if platforms else '无'}, 去重窗口: {dedup_window}秒")
 
@@ -324,7 +333,8 @@ class MultiPlatformNotifier:
                     'wechat': bool(self.wechat_webhook_url),
                     'dingtalk': bool(self.dingtalk_webhook_url),
                     'feishu': bool(self.feishu_webhook_url),
-                    'bark': bool(self.bark_url)
+                    'bark': bool(self.bark_url),
+                    'pushplus': bool(self.pushplus_params),
                 }
             }
     
@@ -415,6 +425,13 @@ class MultiPlatformNotifier:
             results.append(bark_result)
             self.logger.debug(f"合并事件-Bark通知发送结果: {bark_result}")
         
+        # 发送到 PushPlus
+        if self.pushplus_params:
+            pushplus_message = self._build_bark_message(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
+            pushplus_result = self._send_to_pushplus(pushplus_message)
+            results.append(pushplus_result)
+            self.logger.debug(f"合并事件-PushPlus通知发送结果: {pushplus_result}")
+        
         # 记录发送结果
         if results and any(results):
             self._record_send_result(True)
@@ -487,6 +504,13 @@ class MultiPlatformNotifier:
             bark_result = self._send_to_bark(bark_message)
             results.append(bark_result)
             self.logger.debug(f"Bark通知发送结果: {bark_result}")
+        
+        # 发送到 PushPlus
+        if self.pushplus_params:
+            pushplus_message = self._build_bark_message(event_type, event_data, timestamp, raw_log)
+            pushplus_result = self._send_to_pushplus(pushplus_message)
+            results.append(pushplus_result)
+            self.logger.debug(f"PushPlus通知发送结果: {pushplus_result}")
         
         # 处理结果
         if results and any(results):  # 至少一个平台发送成功
@@ -582,6 +606,41 @@ class MultiPlatformNotifier:
             result = self.connection_pool.get(bark_push_url)
             if result:
                 any_success = True
+        return any_success
+
+    def _send_to_pushplus(self, message: MultiPlatformMessage) -> bool:
+        """
+        发送到 PushPlus。固定 POST http://www.pushplus.plus/send，请求体为用户配置的 JSON。
+        - title 的 value 若为 "{title}"：与 Bark 一致，用 message.title 作为推送标题，content 为 message.content。
+        - title 为用户自定义时：推送标题用用户填的 title，正文为「推送标题 + 正文」一起放入 content。
+        - content 始终替换为本次要推送的正文内容（或标题+正文）。
+        """
+        param_list = self._iter_urls(self.pushplus_params)
+        if not param_list:
+            return False
+        any_success = False
+        for param_str in param_list:
+            try:
+                payload = json.loads(param_str)
+                if not isinstance(payload, dict) or 'token' not in payload:
+                    self.logger.warning("PushPlus 参数缺少 token，已跳过")
+                    continue
+                user_title = (payload.get('title') or '').strip()
+                if user_title == '{title}':
+                    final_title = message.title
+                    final_content = message.content
+                else:
+                    final_title = user_title or message.title
+                    final_content = message.title + '\n\n' + message.content
+                payload['title'] = final_title
+                payload['content'] = final_content
+                result = self.connection_pool.post(PUSHPLUS_URL, payload)
+                if result is not None:
+                    any_success = True
+            except json.JSONDecodeError as e:
+                self.logger.warning("PushPlus 参数 JSON 解析失败，已跳过: %s", e)
+            except Exception as e:
+                self.logger.warning("PushPlus 发送异常: %s", e)
         return any_success
     
     def _generate_fingerprint(self, event_type: str, event_data: Dict[str, Any]) -> str:
@@ -1181,6 +1240,13 @@ class MultiPlatformNotifier:
             bark_result = self._send_to_bark(bark_message)
             results.append(bark_result)
             self.logger.debug(f"Bark系统通知发送结果: {bark_result}")
+        
+        # 发送到 PushPlus
+        if self.pushplus_params:
+            pushplus_message = self._build_bark_message(event_type, event_data, '', '')
+            pushplus_result = self._send_to_pushplus(pushplus_message)
+            results.append(pushplus_result)
+            self.logger.debug(f"PushPlus系统通知发送结果: {pushplus_result}")
         
         # 处理结果：返回是否成功及成功/失败渠道数（供勿扰汇总等展示）
         success_count = sum(1 for r in results if r)

@@ -39,7 +39,7 @@ class Application:
         banner = f"""
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         监控模式: 数据库轮询 (logger_data.db3 log 表)
-        通知方式: 企业微信/钉钉/飞书机器人/Bark
+        通知方式: 企业微信/钉钉/飞书机器人/Bark/PushPlus
 
         """
         print(banner)
@@ -52,7 +52,7 @@ class Application:
             # 加载配置（可不配置 Webhook，部署后通过 UI 配置）
             self.config = Config()
             init_push_stats(self.config.cursor_dir)
-            has_webhook = any([self.config.wechat_webhook_url, self.config.dingtalk_webhook_url, self.config.feishu_webhook_url, self.config.bark_url])
+            has_webhook = any([self.config.wechat_webhook_url, self.config.dingtalk_webhook_url, self.config.feishu_webhook_url, self.config.bark_url, self.config.pushplus_params])
             if has_webhook:
                 print("配置加载完成（已配置推送渠道）")
             else:
@@ -80,6 +80,8 @@ class Application:
                 print(f"飞书Webhook: 已配置")
             if self.config.bark_url:
                 print(f"Bark: 已配置")
+            if self.config.pushplus_params:
+                print(f"PushPlus: 已配置")
             if not has_webhook:
                 print("未配置推送渠道：不轮询数据库、不推送消息，仅提供 Web 配置页面。")
                 print("初始化完成（待配置）。")
@@ -132,6 +134,7 @@ class Application:
             self.config.dingtalk_webhook_url,
             self.config.feishu_webhook_url,
             self.config.bark_url,
+            self.config.pushplus_params,
         ])
         if self.notifier is None and has_webhook:
             print("配置已保存并热加载：检测到新配置的推送渠道，正在启动监控...")
