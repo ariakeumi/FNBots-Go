@@ -39,5 +39,7 @@
   "dnd_enabled": false,
   "dnd_start_time": "22:00",
   "dnd_end_time": "07:00",
-  "pushplus_params": ""
+  "pushplus_params": "",
+  "web_password_salt": "60400b94bc4b44305911b3a44f80ef0c",
+  "web_password_hash": "5cee924de10142a9744373ec4378a136604351b25c5d05e0099588eae3333f83"
 }

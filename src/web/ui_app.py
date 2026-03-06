@@ -1,9 +1,12 @@
+import hashlib
 import json
 import os
 import re
+import secrets
 import socket
 import sys
 import threading
+import time
 from pathlib import Path
 
 # 直接运行本文件时（python src/web/ui_app.py），把 src 加入 path 以便导入 notifier 等
@@ -16,6 +19,81 @@ if __name__ == "__main__":
 from flask import Flask, jsonify, request, render_template_string
 
 from notifier.multi_platform_notifier import MultiPlatformNotifier
+
+# 配置页密码：会话空闲超时（秒），超时后需重新输入密码
+SESSION_IDLE_SECONDS = 300
+AUTH_COOKIE_NAME = "fnmb_session"
+PBKDF2_ITERATIONS = 100000
+
+# 内存会话：session_id -> {"last_activity": float}
+_sessions = {}
+_sessions_lock = threading.Lock()
+
+
+def _hash_password(password: str, salt: bytes) -> str:
+    """PBKDF2-HMAC-SHA256，返回 hex。"""
+    h = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        PBKDF2_ITERATIONS,
+    )
+    return h.hex()
+
+
+def _verify_password(password: str, salt_hex: str, stored_hash: str) -> bool:
+    """验证密码是否与存储的 hash 一致。"""
+    try:
+        salt = bytes.fromhex(salt_hex)
+        got = _hash_password(password, salt)
+        return secrets.compare_digest(got, stored_hash)
+    except Exception:
+        return False
+
+
+def _get_password_config(raw: dict) -> tuple:
+    """返回 (salt_hex, hash_hex)，未设置则 (None, None)。"""
+    salt = (raw.get("web_password_salt") or "").strip()
+    h = (raw.get("web_password_hash") or "").strip()
+    if salt and h:
+        return (salt, h)
+    return (None, None)
+
+
+def _has_password_set() -> bool:
+    raw = _load_raw_config()
+    salt, h = _get_password_config(raw)
+    return salt is not None and h is not None
+
+
+def _create_session() -> str:
+    sid = secrets.token_urlsafe(32)
+    with _sessions_lock:
+        _sessions[sid] = {"last_activity": time.time()}
+    return sid
+
+
+def _get_session_id_from_cookie() -> str:
+    return (request.cookies.get(AUTH_COOKIE_NAME) or "").strip()
+
+
+def _touch_session(session_id: str) -> bool:
+    """若会话有效则更新 last_activity 并返回 True。"""
+    if not session_id:
+        return False
+    with _sessions_lock:
+        if session_id not in _sessions:
+            return False
+        last = _sessions[session_id]["last_activity"]
+        if time.time() - last > SESSION_IDLE_SECONDS:
+            del _sessions[session_id]
+            return False
+        _sessions[session_id]["last_activity"] = time.time()
+        return True
+
+
+def _is_authenticated() -> bool:
+    return _touch_session(_get_session_id_from_cookie())
 
 
 def _get_base_dir() -> Path:
@@ -180,6 +258,95 @@ def create_app(on_config_saved=None) -> Flask:
         {"id": "pushplus", "name": "PushPlus"},
     ]
 
+    PROTECTED_PATHS = {"/", "/api/config", "/api/save-config", "/api/test", "/api/push-stats"}
+
+    @app.before_request
+    def _require_auth():
+        # 仅保护 API，首页始终返回 HTML，由前端根据 auth/status 展示登录或配置
+        if request.path == "/":
+            return None
+        if request.path not in PROTECTED_PATHS:
+            return None
+        if not _has_password_set():
+            return None
+        if _is_authenticated():
+            return None
+        return jsonify({"ok": False, "message": "未登录或会话已过期，请重新输入密码。"}), 401
+
+    @app.get("/api/auth/status")
+    def auth_status():
+        """无需登录即可访问。返回是否需要设置密码、是否需要登录、是否已认证。"""
+        has_pw = _has_password_set()
+        authenticated = _is_authenticated()
+        need_setup = not has_pw
+        need_login = has_pw and not authenticated
+        return jsonify({
+            "ok": True,
+            "need_setup": need_setup,
+            "need_login": need_login,
+            "authenticated": authenticated,
+        })
+
+    @app.post("/api/auth/set-password")
+    def auth_set_password():
+        """首次设置密码（两次输入须一致）。"""
+        if _has_password_set():
+            return jsonify({"ok": False, "message": "已设置过密码，请使用登录。"}), 400
+        payload = request.get_json(force=True, silent=True) or {}
+        p1 = (payload.get("password") or "").strip()
+        p2 = (payload.get("password_confirm") or "").strip()
+        if not p1:
+            return jsonify({"ok": False, "message": "请输入密码。"}), 400
+        if len(p1) < 6:
+            return jsonify({"ok": False, "message": "密码长度至少 6 位。"}), 400
+        if p1 != p2:
+            return jsonify({"ok": False, "message": "两次输入的密码不一致。"}), 400
+        salt = secrets.token_hex(16)
+        stored_hash = _hash_password(p1, bytes.fromhex(salt))
+        raw = _load_raw_config()
+        raw["web_password_salt"] = salt
+        raw["web_password_hash"] = stored_hash
+        try:
+            _save_raw_config(raw)
+        except Exception as e:
+            return jsonify({"ok": False, "message": f"保存失败：{e}"}), 500
+        session_id = _create_session()
+        resp = jsonify({"ok": True, "message": "密码设置成功。"})
+        resp.set_cookie(
+            AUTH_COOKIE_NAME,
+            session_id,
+            max_age=SESSION_IDLE_SECONDS,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+        )
+        return resp
+
+    @app.post("/api/auth/login")
+    def auth_login():
+        """使用密码登录。"""
+        if not _has_password_set():
+            return jsonify({"ok": False, "message": "尚未设置密码。"}), 400
+        payload = request.get_json(force=True, silent=True) or {}
+        password = (payload.get("password") or "").strip()
+        if not password:
+            return jsonify({"ok": False, "message": "请输入密码。"}), 400
+        raw = _load_raw_config()
+        salt, stored_hash = _get_password_config(raw)
+        if not _verify_password(password, salt, stored_hash):
+            return jsonify({"ok": False, "message": "密码错误。"}), 401
+        session_id = _create_session()
+        resp = jsonify({"ok": True, "message": "登录成功。"})
+        resp.set_cookie(
+            AUTH_COOKIE_NAME,
+            session_id,
+            max_age=SESSION_IDLE_SECONDS,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+        )
+        return resp
+
     @app.get("/api/config")
     def get_config():
         raw = _load_raw_config()
@@ -223,7 +390,7 @@ def create_app(on_config_saved=None) -> Flask:
         data = {
             "title": "FnMessageBots",
             "subtitle": "飞牛日志消息推送机器人",
-            "version": "2.0.2",
+            "version": "2.0.3",
             "events_by_category": events_by_category,
             "selected_events": monitor_events,
             "channels": channels,
@@ -387,7 +554,7 @@ def create_app(on_config_saved=None) -> Flask:
             content,
             {
                 "hostname": socket.gethostname(),
-                "version": "2.0.2",
+                "version": "2.0.3",
             },
         )
         ok = out.get("success", False) if isinstance(out, dict) else bool(out)
@@ -788,15 +955,97 @@ def create_app(on_config_saved=None) -> Flask:
         grid-template-columns: 1fr;
       }
     }
+    .auth-page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+      background: #eef3ff;
+      gap: 16px;
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 420px;
+      background: rgba(255,255,255,0.95);
+      border-radius: 16px;
+      box-shadow: 0 18px 40px rgba(15,23,42,0.18);
+      padding: 32px 40px;
+      border: 1px solid rgba(148,163,184,0.32);
+    }
+    .auth-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    .auth-sub {
+      font-size: 13px;
+      color: #6b7280;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .auth-form .field-label { font-size: 13px; color: #4b5563; margin-bottom: 4px; }
+    .auth-form .field-label + input { margin-bottom: 12px; }
+    .auth-form .btn-block { width: 100%; margin-top: 16px; }
+    .auth-msg {
+      font-size: 13px;
+      margin-top: 12px;
+      min-height: 18px;
+      text-align: center;
+    }
+    .auth-msg.error { color: #b91c1c; }
+    .auth-msg.ok { color: #166534; }
+    .auth-hint {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-top: 16px;
+      text-align: center;
+    }
+    input[type="password"] {
+      width: 100%;
+      padding: 7px 9px;
+      border-radius: 8px;
+      border: 1px solid #d1d5db;
+      font-size: 13px;
+    }
   </style>
 </head>
 <body>
-  <div class="page">
+  <div id="auth-gate" class="auth-page" style="display:none;">
+    <div class="auth-card">
+      <div id="auth-set-password" style="display:none;">
+        <div class="auth-title">设置访问密码</div>
+        <div class="auth-sub">首次使用或已清除密码后，请设置新密码（至少 6 位）</div>
+        <form class="auth-form" id="form-set-password">
+          <div class="field-label">密码</div>
+          <input type="password" id="set-pw-password" placeholder="请输入密码" autocomplete="new-password" />
+          <div class="field-label">确认密码</div>
+          <input type="password" id="set-pw-confirm" placeholder="请再次输入密码" autocomplete="new-password" />
+          <button type="submit" class="btn btn-primary btn-block">确认设置</button>
+        </form>
+        <div id="auth-set-msg" class="auth-msg"></div>
+      </div>
+      <div id="auth-login" style="display:none;">
+        <div class="auth-title">输入访问密码</div>
+        <div class="auth-sub">会话有效期为 5 分钟，关闭页面后若未超时无需重新输入</div>
+        <form class="auth-form" id="form-login">
+          <div class="field-label">密码</div>
+          <input type="password" id="login-password" placeholder="请输入密码" autocomplete="current-password" />
+          <button type="submit" class="btn btn-primary btn-block">登录</button>
+        </form>
+        <div id="auth-login-msg" class="auth-msg"></div>
+      </div>
+    </div>
+  </div>
+  <div id="app-main" class="page" style="display:none;">
     <div class="card">
       <div class="header">
         <div class="header-title" id="app-title">FnMessageBots</div>
         <div class="header-sub" id="app-subtitle">飞牛日志消息推送机器人</div>
-        <div class="header-ver" id="app-version">2.0.2</div>
+        <div class="header-ver" id="app-version">2.0.3</div>
       </div>
 
       <div class="section stats-section">
@@ -920,6 +1169,88 @@ def create_app(on_config_saved=None) -> Flask:
     const statusBar = document.getElementById("status-bar");
 
     let channelOptions = [];
+    const fetchOpts = { credentials: "include" };
+
+    async function initAuth() {
+      const res = await fetch("/api/auth/status", fetchOpts);
+      const data = await res.json();
+      const authGate = document.getElementById("auth-gate");
+      const appMain = document.getElementById("app-main");
+      if (data.authenticated) {
+        authGate.style.display = "none";
+        appMain.style.display = "flex";
+        loadConfig();
+        return;
+      }
+      authGate.style.display = "flex";
+      appMain.style.display = "none";
+      document.getElementById("auth-set-password").style.display = data.need_setup ? "block" : "none";
+      document.getElementById("auth-login").style.display = data.need_login ? "block" : "none";
+      document.getElementById("auth-set-msg").textContent = "";
+      document.getElementById("auth-login-msg").textContent = "";
+    }
+
+    document.getElementById("form-set-password").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const msgEl = document.getElementById("auth-set-msg");
+      const p1 = document.getElementById("set-pw-password").value.trim();
+      const p2 = document.getElementById("set-pw-confirm").value.trim();
+      msgEl.textContent = "";
+      msgEl.className = "auth-msg";
+      if (p1.length < 6) {
+        msgEl.textContent = "密码长度至少 6 位";
+        msgEl.className = "auth-msg error";
+        return;
+      }
+      if (p1 !== p2) {
+        msgEl.textContent = "两次输入的密码不一致";
+        msgEl.className = "auth-msg error";
+        return;
+      }
+      const res = await fetch("/api/auth/set-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ password: p1, password_confirm: p2 }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        msgEl.textContent = "设置成功，正在进入配置页…";
+        msgEl.className = "auth-msg ok";
+        initAuth();
+      } else {
+        msgEl.textContent = json.message || "设置失败";
+        msgEl.className = "auth-msg error";
+      }
+    });
+
+    document.getElementById("form-login").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const msgEl = document.getElementById("auth-login-msg");
+      const password = document.getElementById("login-password").value.trim();
+      msgEl.textContent = "";
+      msgEl.className = "auth-msg";
+      if (!password) {
+        msgEl.textContent = "请输入密码";
+        msgEl.className = "auth-msg error";
+        return;
+      }
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ password }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        msgEl.textContent = "登录成功，正在进入配置页…";
+        msgEl.className = "auth-msg ok";
+        initAuth();
+      } else {
+        msgEl.textContent = json.message || "登录失败";
+        msgEl.className = "auth-msg error";
+      }
+    });
 
     function setStatus(ok, message) {
       statusBar.className = "status-bar " + (ok ? "status-ok" : "status-error");
@@ -1002,8 +1333,12 @@ def create_app(on_config_saved=None) -> Flask:
 
     async function loadConfig() {
       try {
-        const res = await fetch("/api/config");
+        const res = await fetch("/api/config", fetchOpts);
         const json = await res.json();
+        if (res.status === 401) {
+          initAuth();
+          return;
+        }
         if (!json.ok) {
           setStatus(false, json.message || "加载配置失败");
           return;
@@ -1133,7 +1468,7 @@ def create_app(on_config_saved=None) -> Flask:
 
     async function loadPushStats() {
       try {
-        const res = await fetch("/api/push-stats");
+        const res = await fetch("/api/push-stats", fetchOpts);
         const json = await res.json();
         if (!json.ok || !json.data) return;
         const t = json.data.total || {};
@@ -1187,6 +1522,7 @@ def create_app(on_config_saved=None) -> Flask:
         const res = await fetch("/api/save-config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify(payload),
         });
         const json = await res.json();
@@ -1214,6 +1550,7 @@ def create_app(on_config_saved=None) -> Flask:
         const res = await fetch("/api/test", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({ content }),
         });
         const json = await res.json();
@@ -1230,7 +1567,7 @@ def create_app(on_config_saved=None) -> Flask:
     });
 
     window.addEventListener("load", () => {
-      loadConfig();
+      initAuth();
       setInterval(loadPushStats, 30000);
     });
   </script>

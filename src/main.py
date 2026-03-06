@@ -185,7 +185,7 @@ class Application:
                     self.notifier.send_system_notification(
                         'APP_ERROR',
                         '应用初始化失败: 未知错误',
-                        {'hostname': socket.gethostname(), 'version': '2.0.2'}
+                        {'hostname': socket.gethostname(), 'version': '2.0.3'}
                     )
                 sys.exit(1)
             
@@ -213,7 +213,7 @@ class Application:
                 self.notifier.send_system_notification(
                     'APP_START',
                     '飞牛NAS日志监控系统已启动，开始监控系统事件',
-                    {'hostname': socket.gethostname(), 'version': '2.0.2'}
+                    {'hostname': socket.gethostname(), 'version': '2.0.3'}
                 )
                 if self.log_poller:
                     print("启动数据库日志轮询器...")
@@ -338,7 +338,7 @@ class Application:
                 self.notifier.send_system_notification(
                     'APP_ERROR',
                     f'触发自动重启: {reason}',
-                    {'hostname': socket.gethostname(), 'version': '2.0.2'}
+                    {'hostname': socket.gethostname(), 'version': '2.0.3'}
                 )
         except Exception:
             pass
@@ -355,7 +355,7 @@ class Application:
             self.notifier.send_system_notification(
                 'APP_STOP',
                 '飞牛NAS日志监控系统已停止，监控服务暂停',
-                {'hostname': socket.gethostname(), 'version': '2.0.2'}
+                {'hostname': socket.gethostname(), 'version': '2.0.3'}
             )
 
         # 停止数据库轮询器
