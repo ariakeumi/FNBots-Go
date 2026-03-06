@@ -96,6 +96,12 @@ def _is_authenticated() -> bool:
     return _touch_session(_get_session_id_from_cookie())
 
 
+def _is_password_verification_enabled() -> bool:
+    """是否开启密码验证（默认 True）。关闭后不删密码，但访问配置页无需验证。"""
+    raw = _load_raw_config()
+    return bool(raw.get("web_password_enabled", True))
+
+
 def _get_base_dir() -> Path:
     """Docker 下用 /app，本地调试用项目根目录（含 config 的目录）。"""
     app_home = os.getenv("APP_HOME")
@@ -269,6 +275,8 @@ def create_app(on_config_saved=None) -> Flask:
             return None
         if not _has_password_set():
             return None
+        if not _is_password_verification_enabled():
+            return None
         if _is_authenticated():
             return None
         return jsonify({"ok": False, "message": "未登录或会话已过期，请重新输入密码。"}), 401
@@ -277,9 +285,10 @@ def create_app(on_config_saved=None) -> Flask:
     def auth_status():
         """无需登录即可访问。返回是否需要设置密码、是否需要登录、是否已认证。"""
         has_pw = _has_password_set()
+        verification_enabled = _is_password_verification_enabled()
         authenticated = _is_authenticated()
         need_setup = not has_pw
-        need_login = has_pw and not authenticated
+        need_login = has_pw and verification_enabled and not authenticated
         return jsonify({
             "ok": True,
             "need_setup": need_setup,
@@ -402,6 +411,7 @@ def create_app(on_config_saved=None) -> Flask:
             "dnd_enabled": bool(raw.get("dnd_enabled", False)),
             "dnd_start_time": (raw.get("dnd_start_time") or "22:00").strip(),
             "dnd_end_time": (raw.get("dnd_end_time") or "07:00").strip(),
+            "web_password_enabled": bool(raw.get("web_password_enabled", True)),
             "channel_options": CHANNEL_OPTIONS,
         }
         return jsonify({"ok": True, "data": data})
@@ -420,6 +430,7 @@ def create_app(on_config_saved=None) -> Flask:
         dnd_enabled = bool(payload.get("dnd_enabled", False))
         dnd_start_time = (payload.get("dnd_start_time") or "22:00").strip()
         dnd_end_time = (payload.get("dnd_end_time") or "07:00").strip()
+        web_password_enabled = bool(payload.get("web_password_enabled", True))
 
         if dnd_enabled:
             if not dnd_start_time or not dnd_end_time:
@@ -512,6 +523,7 @@ def create_app(on_config_saved=None) -> Flask:
                 "dnd_enabled": dnd_enabled,
                 "dnd_start_time": dnd_start_time,
                 "dnd_end_time": dnd_end_time,
+                "web_password_enabled": web_password_enabled,
             }
         )
 
@@ -1104,6 +1116,11 @@ def create_app(on_config_saved=None) -> Flask:
         <div class="section-title">
           <span>系统设置 <small>影响日志缓存与数据库轮询行为</small></span>
         </div>
+        <div class="field-label" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <input type="checkbox" id="input-web-password-enabled" />
+          <span>开启密码验证</span>
+        </div>
+        <div class="field-helper" style="margin-bottom: 16px;">默认开启。关闭后无需输入密码即可访问配置页，本地密码仍保留，可随时重新开启。</div>
         <div class="system-grid">
           <div>
             <div class="field-label">日志缓存天数 (day)</div>
@@ -1176,7 +1193,9 @@ def create_app(on_config_saved=None) -> Flask:
       const data = await res.json();
       const authGate = document.getElementById("auth-gate");
       const appMain = document.getElementById("app-main");
-      if (data.authenticated) {
+      // 已登录，或未开启密码验证（无需设置密码且无需登录）时直接进入配置页
+      const canShowApp = data.authenticated || (!data.need_setup && !data.need_login);
+      if (canShowApp) {
         authGate.style.display = "none";
         appMain.style.display = "flex";
         loadConfig();
@@ -1443,6 +1462,7 @@ def create_app(on_config_saved=None) -> Flask:
           createChannelRow("wechat", "");
         }
 
+        document.getElementById("input-web-password-enabled").checked = data.web_password_enabled !== false;
         document.getElementById("input-log-days").value = data.log_retention_days || 7;
         document.getElementById("input-poll-interval").value = data.logger_poll_interval || 3;
         document.getElementById("input-db-path").value = data.logger_db_path || "";
@@ -1513,6 +1533,7 @@ def create_app(on_config_saved=None) -> Flask:
         log_retention_days: document.getElementById("input-log-days").value,
         logger_poll_interval: document.getElementById("input-poll-interval").value,
         logger_db_path: document.getElementById("input-db-path").value,
+        web_password_enabled: document.getElementById("input-web-password-enabled").checked,
         dnd_enabled: document.getElementById("input-dnd-enabled").checked,
         dnd_start_time: document.getElementById("input-dnd-start").value || "22:00",
         dnd_end_time: document.getElementById("input-dnd-end").value || "07:00",

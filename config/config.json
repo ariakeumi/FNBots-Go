@@ -1,5 +1,5 @@
 {
-  "wechat_webhook_url": "",
+  "wechat_webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=3b355a21-c5b9-47cb-86dd-7d7032871935",
   "dingtalk_webhook_url": "",
   "feishu_webhook_url": "",
   "bark_url": "",
@@ -39,5 +39,6 @@
   "dnd_enabled": false,
   "dnd_start_time": "22:00",
   "dnd_end_time": "07:00",
-  "pushplus_params": ""
+  "pushplus_params": "",
+  "web_password_enabled": true
 }

@@ -27,8 +27,8 @@
       }
     },
     "git": {
-      "command": "uvx",
-      "args": ["mcp-server-git"]
+      "command": "npx",
+      "args": ["-y", "@cyanheads/git-mcp-server@latest"]
     }
   }
 }
