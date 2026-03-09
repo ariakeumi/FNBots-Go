@@ -170,6 +170,9 @@ EVENT_CATEGORIES = [
     ("file_ops", "文件操作", [
         "ARCHIVING_SUCCESS", "DeleteFile", "MovetoTrashbin", "SHARE_EVENTID_DEL", "SHARE_EVENTID_PUT",
     ]),
+    ("vm", "虚拟机", [
+        "STATUS_RUNNING_VM", "SHUTDOWN_VM", "DESTROY_VM",
+    ]),
 ]
 # 不在 UI 中提供选择（内部使用的系统事件）
 EVENT_IDS_HIDDEN_IN_UI = {"APP_START", "APP_STOP"}
@@ -198,6 +201,7 @@ VALID_EVENT_IDS = frozenset({
     "WEBDAV_ENABLED", "WEBDAV_DISABLED", "SAMBA_ENABLED", "SAMBA_DISABLED",
     "DLNA_ENABLED", "DLNA_DISABLED", "FTP_ENABLED", "FTP_DISABLED", "NFS_ENABLED", "NFS_DISABLED",
     "FW_ENABLE", "FW_DISABLE", "SECURITY_PORTCHANGED",
+    "SHUTDOWN_VM", "STATUS_RUNNING_VM", "DESTROY_VM",
 })
 
 # 默认勾选的事件（不含应用生命周期 6 项；应用启动/自启动失败、UPS 开启/关闭 默认不勾选）

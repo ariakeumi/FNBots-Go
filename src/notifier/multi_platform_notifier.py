@@ -113,6 +113,9 @@ class MultiPlatformNotifier:
         'FW_ENABLE': '🔥 飞牛NAS-防火墙已开启',
         'FW_DISABLE': '🔥 飞牛NAS-防火墙已关闭',
         'SECURITY_PORTCHANGED': '🔒 飞牛NAS-安全/端口变更',
+        'SHUTDOWN_VM': '🖥️ 飞牛NAS-用户关闭虚拟机',
+        'STATUS_RUNNING_VM': '🖥️ 飞牛NAS-用户开启虚拟机',
+        'DESTROY_VM': '🗑️ 飞牛NAS-虚拟机已销毁',
     }
     
     # Bark事件标题映射 - 用于Bark推送，标题统一为"飞牛NAS通知"
@@ -169,6 +172,9 @@ class MultiPlatformNotifier:
         'FW_ENABLE': '防火墙已开启',
         'FW_DISABLE': '防火墙已关闭',
         'SECURITY_PORTCHANGED': '安全/端口变更',
+        'SHUTDOWN_VM': '用户{user}关闭虚拟机{vm_title}',
+        'STATUS_RUNNING_VM': '用户{user}开启虚拟机{vm_title}',
+        'DESTROY_VM': '用户{user}销毁虚拟机{vm_title}',
     }
     
     # 事件备注
@@ -224,6 +230,9 @@ class MultiPlatformNotifier:
         'FW_ENABLE': '🔥 防火墙已开启。',
         'FW_DISABLE': '🔥 防火墙已关闭。',
         'SECURITY_PORTCHANGED': '🔒 安全或端口设置已变更。',
+        'SHUTDOWN_VM': '🖥️ 用户已执行虚拟机关机操作。',
+        'STATUS_RUNNING_VM': '🖥️ 用户已执行虚拟机开机操作。',
+        'DESTROY_VM': '🗑️ 用户已销毁虚拟机，请确认是否为预期操作。',
     }
     
     def __init__(self, 
@@ -804,6 +813,8 @@ class MultiPlatformNotifier:
                 content += '\n' + self._build_merged_disk_spindown_content(single_disk_as_merged)
         elif event_type == 'DISK_IO_ERR':
             content += '\n' + self._build_disk_io_err_content(event_data)
+        elif event_type in {'SHUTDOWN_VM', 'STATUS_RUNNING_VM', 'DESTROY_VM'}:
+            content += '\n' + self._build_vm_content(event_data)
         elif event_type in {
             'ARCHIVING_SUCCESS', 'DeleteFile', 'MovetoTrashbin', 'SHARE_EVENTID_DEL', 'SHARE_EVENTID_PUT',
             'WEBDAV_ENABLED', 'WEBDAV_DISABLED', 'SAMBA_ENABLED', 'SAMBA_DISABLED',
@@ -853,6 +864,21 @@ class MultiPlatformNotifier:
             content += f"🔢 序列号: {serial}\n"
         
         return content
+
+    def _build_vm_content(self, event_data: Dict[str, Any]) -> str:
+        """虚拟机事件内容：展示 VM_TITLE、USER_NAME 等（parameter 中 data）。"""
+        content = ""
+        data = event_data.get('data', {}) or {}
+        vm_title = data.get('VM_TITLE', data.get('vm_title', ''))
+        if vm_title:
+            content += f"🖥️ 虚拟机: {vm_title}\n"
+        user = event_data.get('user') or data.get('USER_NAME', data.get('user', ''))
+        if user:
+            content += f"👤 操作用户: {user}\n"
+        from_src = event_data.get('from', '')
+        if from_src:
+            content += f"📦 来源: {from_src}\n"
+        return content or "（无额外详情）"
 
     def _build_simple_content(self, event_data: Dict[str, Any]) -> str:
         """可选事件通用内容：展示操作用户、来源等（parameter 中 data.USER_NAME、from 等）。"""
@@ -1233,18 +1259,15 @@ class MultiPlatformNotifier:
             results.append(feishu_result)
             self.logger.debug(f"飞书系统通知发送结果: {feishu_result}")
         
-        # 发送到Bark
+        # 发送到Bark（系统通知直接用已包含完整 message 的 multi_msg，避免 DND 汇总等正文丢失）
         if self.bark_url:
-            # 构建Bark系统消息
-            bark_message = self._build_bark_message(event_type, event_data, '', '')
-            bark_result = self._send_to_bark(bark_message)
+            bark_result = self._send_to_bark(multi_msg)
             results.append(bark_result)
             self.logger.debug(f"Bark系统通知发送结果: {bark_result}")
         
         # 发送到 PushPlus
         if self.pushplus_params:
-            pushplus_message = self._build_bark_message(event_type, event_data, '', '')
-            pushplus_result = self._send_to_pushplus(pushplus_message)
+            pushplus_result = self._send_to_pushplus(multi_msg)
             results.append(pushplus_result)
             self.logger.debug(f"PushPlus系统通知发送结果: {pushplus_result}")
         

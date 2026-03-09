@@ -281,10 +281,12 @@ class Config:
                         "ARCHIVING_SUCCESS", "DeleteFile", "MovetoTrashbin", "SHARE_EVENTID_DEL", "SHARE_EVENTID_PUT",
                         "WEBDAV_ENABLED", "WEBDAV_DISABLED", "SAMBA_ENABLED", "SAMBA_DISABLED",
                         "DLNA_ENABLED", "DLNA_DISABLED", "FTP_ENABLED", "FTP_DISABLED", "NFS_ENABLED", "NFS_DISABLED",
-                        "FW_ENABLE", "FW_DISABLE", "SECURITY_PORTCHANGED"}
-        for event in self.monitor_events:
-            if event not in valid_events:
-                raise ValueError(f"未知事件类型: {event}")
+                        "FW_ENABLE", "FW_DISABLE", "SECURITY_PORTCHANGED",
+                        "SHUTDOWN_VM", "STATUS_RUNNING_VM", "DESTROY_VM"}
+        # 过滤掉已移除或未知的事件类型，避免旧配置导致启动失败
+        self.monitor_events = [e for e in self.monitor_events if e in valid_events]
+        if not self.monitor_events:
+            raise ValueError("必须配置至少一个监控事件")
         
 
     
