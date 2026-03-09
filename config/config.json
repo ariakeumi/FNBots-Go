@@ -2,7 +2,7 @@
   "wechat_webhook_url": "",
   "dingtalk_webhook_url": "",
   "feishu_webhook_url": "",
-  "bark_url": "https://api.day.app/BdfKfZyKwVtUFjggjGqou8",
+  "bark_url": "",
   "monitor_events": [
     "LoginSucc",
     "LoginSucc2FA1",
@@ -40,7 +40,5 @@
   "dnd_start_time": "22:00",
   "dnd_end_time": "07:00",
   "pushplus_params": "",
-  "web_password_enabled": true,
-  "web_password_salt": "4481f97ca323f46c3acc8f1d3836bc2e",
-  "web_password_hash": "998096644b4ad1e05a6335600fcb2a657d7a6820c1097d1ff039fd65485b3bbb"
+  "web_password_enabled": true
 }
