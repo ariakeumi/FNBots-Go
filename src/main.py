@@ -191,22 +191,17 @@ class Application:
             
             self.running = True
 
-            # 启动配置 UI 服务（后台线程），无 Webhook 时也提供页面供用户配置；保存时触发热加载
-            ui_port = os.getenv("UI_PORT", "18080")
-            # 控制台提示端口：若宿主机映射端口与容器内不同（如 ports 18090:18080），设 DISPLAY_UI_PORT=18090 提示正确访问地址
-            display_port = os.getenv("DISPLAY_UI_PORT", "").strip() or ui_port
             try:
                 ui_thread = start_ui_server_in_background(on_config_saved=self.reload_config)
-                print(f"配置 UI 已启动（端口 {ui_port}），线程: {ui_thread.name}")
+                print(f"配置 UI 已启动，线程: {ui_thread.name}")
             except Exception as e:
                 print(f"配置 UI 启动失败: {e}")
-
             if not self.notifier:
                 # 未配置推送渠道：不轮询数据库、不推送消息，仅提示用户去 Web 配置
                 print("")
-                print("  >>> 请访问 Web 配置页面完成推送渠道配置 <<<")
-                print(f"  >>> 地址: http://<本机IP>:{display_port}  （保存后自动生效，无需重启） <<<")
+                print("  >>> 请访问 Web 配置页面完成推送渠道配置 （保存后自动生效，无需重启）  <<<")
                 print("")
+                pass
             else:
                 # 已配置推送渠道：正常启动监控与推送
                 self._start_notification_health_monitor()

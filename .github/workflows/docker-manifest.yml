@@ -20,6 +20,7 @@ jobs:
   manifest:
     runs-on: ubuntu-latest
     steps:
+      # DOCKERHUB_TOKEN 须为 Personal Access Token（非登录密码）：https://hub.docker.com/settings/security
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:

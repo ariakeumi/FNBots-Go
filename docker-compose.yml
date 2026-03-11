@@ -4,7 +4,7 @@ services:
     container_name: fn-message-bots
     restart: unless-stopped
     ports:
-      - 18090:18080
+      - 18080:18080
     volumes:
       - ./data/logs:/app/data/logs:rw
       - ./data/cursor:/app/data/cursor:rw
@@ -12,4 +12,3 @@ services:
       - ./config:/app/config:rw
     environment:
       - TZ=Asia/Shanghai
-      - DISPLAY_UI_PORT=18090
