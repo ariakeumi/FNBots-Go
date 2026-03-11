@@ -39,22 +39,29 @@ if [ "${USE_DOCKER_HUB_MIRROR:-1}" = "1" ]; then
     echo "使用国内镜像源拉取 base（USE_DOCKER_HUB_MIRROR=0 则用 Docker Hub）"
 fi
 
-# 与 publish-amd64.sh 一致：docker build 再本机 docker push
-echo "正在构建 ARM64 镜像 $FULL_IMAGE ..."
+# docker build 再推送（推送带重试，国内访问 Docker Hub 易 EOF/超时）
+echo "Building ARM64 image $FULL_IMAGE ..."
 if ! docker build --platform linux/arm64 $BASE_IMAGE_ARG -t "$FULL_IMAGE" .; then
-    echo "构建失败。"
+    echo "Build failed."
     exit 1
 fi
-echo "正在推送 $FULL_IMAGE ..."
-if ! docker push "$FULL_IMAGE"; then
-    echo ""
-    echo "推送失败。请检查: 1) docker login 是否已登录  2) 镜像名与 amd64 一致（如 sunanang/fn-message-bots）"
+push_with_retry() {
+    local img="$1"
+    local max=3 n=1
+    while true; do
+        echo "Pushing $img (attempt $n/$max)..."
+        if docker push "$img"; then return 0; fi
+        [ "$n" -ge "$max" ] && { echo "Push failed after $max attempts. Try VPN or retry later."; return 1; }
+        n=$((n+1)); echo "Retry in 5s..."; sleep 5
+    done
+}
+if ! push_with_retry "$FULL_IMAGE"; then
+    echo "Check: docker login, image name (e.g. sunanang/fn-message-bots)"
     exit 1
 fi
 
 echo ""
-echo "ARM64 架构镜像发布完成！"
-echo "已推送: $FULL_IMAGE"
+echo "Done. Pushed: $FULL_IMAGE"
 echo "amd64 与 arm64 已分别保留；可运行 ./publish-manifest.sh $IMAGE_NAME $TAG 生成多架构 tag（如 latest）"
 echo ""
 echo "你可以通过以下命令使用镜像："

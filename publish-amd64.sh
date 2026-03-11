@@ -23,27 +23,43 @@ fi
 
 IMAGE_NAME="$1"
 TAG="${2:-latest}"
-# 推送为 tag-amd64，与 arm64 的 tag-arm64 并存，互不覆盖
+# 仅推送 tag-amd64，与 arm64 的 tag-arm64 并存；latest 由 merge-manifest 等合成
 TAG_ARCH="${TAG}-amd64"
 FULL_IMAGE="${IMAGE_NAME}:${TAG_ARCH}"
 
-echo "镜像名称: $FULL_IMAGE（保留 amd64，不与 arm64 覆盖）"
+echo "Image: $FULL_IMAGE"
 echo ""
 
-# 构建 AMD64 架构的镜像
-echo "正在构建 AMD64 镜像 $FULL_IMAGE ..."
+# 构建并推送 AMD64 镜像（仅 tag-amd64）
+echo "Building AMD64 image..."
 docker build --platform linux/amd64 -t "$FULL_IMAGE" .
 
-# 推送镜像
-echo "正在推送 $FULL_IMAGE ..."
-docker push "$FULL_IMAGE"
+# 推送（带重试，国内访问 Docker Hub 易出现 EOF/超时）
+push_with_retry() {
+    local img="$1"
+    local max=3
+    local n=1
+    while true; do
+        echo "Pushing $img (attempt $n/$max)..."
+        if docker push "$img"; then
+            return 0
+        fi
+        if [ "$n" -ge "$max" ]; then
+            echo "Push failed after $max attempts. Try VPN or retry later."
+            return 1
+        fi
+        n=$((n + 1))
+        echo "Retry in 5s..."
+        sleep 5
+    done
+}
+push_with_retry "$FULL_IMAGE" || exit 1
 
 echo ""
-echo "AMD64 架构镜像发布完成！"
-echo "已推送: $FULL_IMAGE"
-echo "再运行 ./publish-arm64.sh $IMAGE_NAME $TAG 可保留 arm64；最后运行 ./publish-manifest.sh $IMAGE_NAME $TAG 可生成多架构 latest"
+echo "Done. Pushed: $FULL_IMAGE"
+echo "Then run: ./publish-arm64.sh $IMAGE_NAME $TAG, then merge manifest (e.g. GitHub Actions)"
 echo ""
-echo "你可以通过以下命令使用镜像："
+echo "You can run the image with:"
 echo "  docker run -d --platform linux/amd64 --network=host \\"
 echo "    -v /var/log/journal:/var/log/journal:ro \\"
 echo "    -v /run/log/journal:/run/log/journal:ro \\"
@@ -53,5 +69,4 @@ echo "    -v ./data/cursor:/tmp/cursor:rw \\"
 echo "    -e WECHAT_WEBHOOK_URL='your_webhook_url' \\"
 echo "    $FULL_IMAGE"
 echo ""
-echo "或者使用 docker-compose："
-echo "  docker-compose -f docker-compose.yml up -d"
+echo "Or: docker-compose -f docker-compose.yml up -d"
