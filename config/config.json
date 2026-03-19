@@ -1,7 +1,7 @@
 {
   "wechat_webhook_url": "",
   "dingtalk_webhook_url": "",
-  "feishu_webhook_url": "",
+  "feishu_webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/465162b0-a328-443b-b638-f60834602582",
   "bark_url": "",
   "monitor_events": [
     "LoginSucc",
@@ -40,5 +40,6 @@
   "dnd_start_time": "22:00",
   "dnd_end_time": "07:00",
   "pushplus_params": "",
-  "web_password_enabled": true
+  "web_password_enabled": true,
+  "title_prefix": "飞牛NAS"
 }

@@ -106,129 +106,144 @@ class ConnectionPool:
         
         return session
     
-    def post(self, url: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def post(self, url: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         发送POST请求
         
-        Args:
-            url: 请求URL
-            data: 请求数据
-            
         Returns:
-            响应数据或None
+            {"success": bool, "response": dict|None, "error": str|None}
+            成功时 response 为接口返回体，失败时 error 为原因描述
         """
-        # 更新统计
         with self.stats_lock:
             self.stats.total_requests += 1
-        
+        out = {"success": False, "response": None, "error": None}
         try:
             response = self.session.post(
                 url,
                 json=data,
                 timeout=self.timeout
             )
-            
             response.raise_for_status()
-            
             result = None
             try:
                 result = response.json()
             except Exception:
                 result = None
-            
-            # 企业微信/钉钉通常含 errcode；若存在且不为 0，视为失败
-            if isinstance(result, dict) and 'errcode' in result and result.get('errcode') != 0:
-                self.logger.error(f"API返回错误: {result}")
+            body = result if isinstance(result, dict) else {}
+            # 企业微信/钉钉等含 errcode，非 0 视为失败但保留返回体
+            if isinstance(body, dict) and "errcode" in body and body.get("errcode") != 0:
+                self.logger.error(f"API返回错误: {body}")
                 with self.stats_lock:
                     self.stats.failed_requests += 1
-                return None
-            
-            # 其他平台以 HTTP 2xx 作为成功
+                out["response"] = body
+                out["error"] = body.get("errmsg") or f"errcode={body.get('errcode')}"
+                return out
             with self.stats_lock:
                 self.stats.successful_requests += 1
-            return result if result is not None else {}
-
+            out["success"] = True
+            out["response"] = body if body is not None else {}
+            return out
         except requests.exceptions.Timeout:
             self.logger.error(f"POST请求超时 (timeout={self.timeout}s): {url}")
             with self.stats_lock:
                 self.stats.timeout_errors += 1
                 self.stats.failed_requests += 1
+            out["error"] = "请求超时"
+            return out
         except requests.exceptions.ConnectionError as e:
             self.logger.error(f"POST连接错误: {url} - {str(e)}")
             with self.stats_lock:
                 self.stats.connection_errors += 1
                 self.stats.failed_requests += 1
+            out["error"] = "连接错误: " + (str(e)[:80] or "未知")
+            return out
         except requests.exceptions.HTTPError as e:
-            self.logger.error(f"POST HTTP错误: {url} - 状态码: {e.response.status_code if e.response else 'N/A'} - {str(e)}")
+            code = e.response.status_code if e.response is not None else 0
+            self.logger.error(f"POST HTTP错误: {url} - 状态码: {code}")
             with self.stats_lock:
                 self.stats.failed_requests += 1
+            try:
+                body = e.response.json() if e.response is not None else None
+            except Exception:
+                body = None
+            out["response"] = body if isinstance(body, dict) else None
+            if isinstance(body, dict):
+                msg = body.get("errmsg") or body.get("message") or ""
+                out["error"] = f"HTTP {code}" + (f": {msg}" if msg else "")
+            else:
+                out["error"] = f"HTTP {code}"
+            return out
         except Exception as e:
             self.logger.error(f"POST请求异常: {url} - {type(e).__name__}: {str(e)}", exc_info=True)
             with self.stats_lock:
                 self.stats.failed_requests += 1
-        
-        return None
-    
-    def get(self, url: str) -> bool:
+            out["error"] = f"{type(e).__name__}: {(str(e) or '')[:80]}"
+            return out
+
+    def get(self, url: str) -> Dict[str, Any]:
         """
-        发送GET请求（用于Bark等GET类型的推送）
-        
-        Args:
-            url: 请求URL
-            
+        发送GET请求（用于Bark等）
         Returns:
-            请求是否成功
+            {"success": bool, "response": dict|None, "error": str|None}
         """
-        # 更新统计
         with self.stats_lock:
             self.stats.total_requests += 1
-        
+        out = {"success": False, "response": None, "error": None}
         try:
-            # 临时移除 Content-Type 以免 GET 请求误带；用锁保护避免多线程并发修改 session.headers
             with self._session_headers_lock:
-                original_content_type = self.session.headers.get('Content-Type')
+                original_content_type = self.session.headers.get("Content-Type")
                 if original_content_type:
-                    del self.session.headers['Content-Type']
+                    del self.session.headers["Content-Type"]
             try:
-                response = self.session.get(
-                    url,
-                    timeout=self.timeout
-                )
+                response = self.session.get(url, timeout=self.timeout)
             finally:
                 with self._session_headers_lock:
                     if original_content_type:
-                        self.session.headers['Content-Type'] = original_content_type
-            
+                        self.session.headers["Content-Type"] = original_content_type
             if response.status_code < 400:
                 with self.stats_lock:
                     self.stats.successful_requests += 1
-                return True
-            else:
-                self.logger.error(f"GET请求失败: {response.status_code}")
-                with self.stats_lock:
-                    self.stats.failed_requests += 1
-                return False
-
+                out["success"] = True
+                try:
+                    out["response"] = response.json() if response.content else {}
+                except Exception:
+                    out["response"] = {"status_code": response.status_code}
+                return out
+            self.logger.error(f"GET请求失败: {response.status_code}")
+            with self.stats_lock:
+                self.stats.failed_requests += 1
+            try:
+                out["response"] = response.json() if response.content else None
+            except Exception:
+                out["response"] = None
+            out["error"] = f"HTTP {response.status_code}"
+            return out
         except requests.exceptions.Timeout:
             self.logger.error(f"GET请求超时 (timeout={self.timeout}s): {url}")
             with self.stats_lock:
                 self.stats.timeout_errors += 1
                 self.stats.failed_requests += 1
+            out["error"] = "请求超时"
+            return out
         except requests.exceptions.ConnectionError as e:
             self.logger.error(f"GET连接错误: {url} - {str(e)}")
             with self.stats_lock:
                 self.stats.connection_errors += 1
                 self.stats.failed_requests += 1
+            out["error"] = "连接错误: " + (str(e)[:80] or "未知")
+            return out
         except requests.exceptions.HTTPError as e:
-            self.logger.error(f"GET HTTP错误: {url} - 状态码: {e.response.status_code if e.response else 'N/A'} - {str(e)}")
+            code = e.response.status_code if e.response is not None else 0
             with self.stats_lock:
                 self.stats.failed_requests += 1
+            out["error"] = f"HTTP {code}"
+            return out
         except Exception as e:
             self.logger.error(f"GET请求异常: {url} - {type(e).__name__}: {str(e)}", exc_info=True)
             with self.stats_lock:
                 self.stats.failed_requests += 1
-        
-        return False
+            out["error"] = f"{type(e).__name__}: {(str(e) or '')[:80]}"
+            return out
     
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""

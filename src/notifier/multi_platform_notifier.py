@@ -241,6 +241,7 @@ class MultiPlatformNotifier:
                  feishu_webhook_url: str = "",
                  bark_url: str = "",
                  pushplus_params: str = "",
+                 title_prefix: str = "飞牛NAS",
                  dedup_window: int = 300,
                  pool_size: int = 10,
                  retries: int = 3,
@@ -264,6 +265,7 @@ class MultiPlatformNotifier:
         self.feishu_webhook_url = feishu_webhook_url
         self.bark_url = bark_url
         self.pushplus_params = pushplus_params or ""
+        self.title_prefix = (title_prefix or "飞牛NAS").strip() or "飞牛NAS"
         self.dedup_window = dedup_window
         
         # 连接池
@@ -295,10 +297,10 @@ class MultiPlatformNotifier:
 
         # 合并事件定时发送线程
         self._start_merge_timer()
-        
+
         # 日志
         self.logger = logging.getLogger(__name__)
-        
+
         platforms = []
         if self.wechat_webhook_url:
             platforms.append('企业微信')
@@ -310,8 +312,14 @@ class MultiPlatformNotifier:
             platforms.append('Bark')
         if self.pushplus_params:
             platforms.append('PushPlus')
-        
+
         self.logger.info(f"多平台通知器初始化完成，支持平台: {', '.join(platforms) if platforms else '无'}, 去重窗口: {dedup_window}秒")
+
+    def _with_title_prefix(self, title: str) -> str:
+        """把标题中的默认前缀“飞牛NAS”替换为配置前缀。"""
+        if not isinstance(title, str):
+            return str(title)
+        return title.replace("飞牛NAS", self.title_prefix)
 
     def _record_send_result(self, success: bool):
         """记录发送结果用于健康监控"""
@@ -403,45 +411,35 @@ class MultiPlatformNotifier:
         }
         
         # 构建消息
-        title = self.EVENT_TITLES.get(event_type, f"📋 飞牛NAS-系统事件: {event_type}")
+        title = self._with_title_prefix(
+            self.EVENT_TITLES.get(event_type, f"📋 {self.title_prefix}-系统事件: {event_type}")
+        )
         content = self._build_content(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
         message = MultiPlatformMessage(title=title, content=content)
         
         results = []
-        
-        # 发送到企业微信
         if self.wechat_webhook_url:
-            wechat_result = self._send_to_wechat(message)
-            results.append(wechat_result)
-            self.logger.debug(f"合并事件-企业微信通知发送结果: {wechat_result}")
-        
-        # 发送到钉钉
+            ok, cr = self._send_to_wechat(message)
+            results.append(ok)
+            self.logger.debug("合并事件-企业微信: %s", cr)
         if self.dingtalk_webhook_url:
-            dingtalk_result = self._send_to_dingtalk(message)
-            results.append(dingtalk_result)
-            self.logger.debug(f"合并事件-钉钉通知发送结果: {dingtalk_result}")
-        
-        # 发送到飞书
+            ok, cr = self._send_to_dingtalk(message)
+            results.append(ok)
+            self.logger.debug("合并事件-钉钉: %s", cr)
         if self.feishu_webhook_url:
-            feishu_result = self._send_to_feishu(message)
-            results.append(feishu_result)
-            self.logger.debug(f"合并事件-飞书通知发送结果: {feishu_result}")
-        
-        # 发送到Bark
+            ok, cr = self._send_to_feishu(message)
+            results.append(ok)
+            self.logger.debug("合并事件-飞书: %s", cr)
         if self.bark_url:
             bark_message = self._build_bark_message(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
-            bark_result = self._send_to_bark(bark_message)
-            results.append(bark_result)
-            self.logger.debug(f"合并事件-Bark通知发送结果: {bark_result}")
-        
-        # 发送到 PushPlus
+            ok, cr = self._send_to_bark(bark_message)
+            results.append(ok)
+            self.logger.debug("合并事件-Bark: %s", cr)
         if self.pushplus_params:
             pushplus_message = self._build_bark_message(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
-            pushplus_result = self._send_to_pushplus(pushplus_message)
-            results.append(pushplus_result)
-            self.logger.debug(f"合并事件-PushPlus通知发送结果: {pushplus_result}")
-        
-        # 记录发送结果
+            ok, cr = self._send_to_pushplus(pushplus_message)
+            results.append(ok)
+            self.logger.debug("合并事件-PushPlus: %s", cr)
         if results and any(results):
             self._record_send_result(True)
             self.logger.info(f"合并事件发送成功: {event_type}, 数量: {len(event_list)}")
@@ -453,7 +451,7 @@ class MultiPlatformNotifier:
                          event_type: str,
                          event_data: Dict[str, Any],
                          raw_log: str,
-                         timestamp: str) -> bool:
+                         timestamp: str):
         """
         发送通知
         
@@ -464,16 +462,16 @@ class MultiPlatformNotifier:
             timestamp: 时间戳
             
         Returns:
-            是否发送成功（任意一个平台成功即返回True）
+            (success, channel_results): 是否发送成功；channel_results 为 [{"channel": "企业微信", "success": True}, ...]
         """
         # 特殊处理磁盘事件的合并
         if event_type in ['DiskWakeup', 'DiskSpindown']:
-            # 若已是 event_processor 合并后的数据（含 merged_disks 列表），直接发送，避免被 notifier 再次“按条”合并导致内容丢失
             merged_disks = event_data.get('merged_disks') if isinstance(event_data.get('merged_disks'), list) else None
             if merged_disks:
                 self._send_merged_disk_event(event_type, merged_disks, 0)
-                return True
-            return self._handle_disk_event(event_type, event_data, raw_log, timestamp)
+                return True, []  # 合并发送不区分渠道
+            ok = self._handle_disk_event(event_type, event_data, raw_log, timestamp)
+            return ok, []
         
         # 生成事件指纹（用于去重）
         event_fingerprint = self._generate_fingerprint(event_type, event_data)
@@ -481,56 +479,51 @@ class MultiPlatformNotifier:
         # 检查去重
         if self._is_duplicate(event_fingerprint):
             self.logger.debug(f"跳过重复事件: {event_type}")
-            return False
+            return False, []
         
         # 构建消息
         message = self._build_message(event_type, event_data, timestamp, raw_log)
         
-        results = []
+        results: List[bool] = []
+        channel_results: List[Dict[str, Any]] = []
         
-        # 发送到企业微信
         if self.wechat_webhook_url:
-            wechat_result = self._send_to_wechat(message)
-            results.append(wechat_result)
-            self.logger.debug(f"企业微信通知发送结果: {wechat_result}")
-        
-        # 发送到钉钉
+            ok, cr = self._send_to_wechat(message)
+            results.append(ok)
+            channel_results.append(cr)
+            self.logger.debug("企业微信通知发送结果: %s", cr)
         if self.dingtalk_webhook_url:
-            dingtalk_result = self._send_to_dingtalk(message)
-            results.append(dingtalk_result)
-            self.logger.debug(f"钉钉通知发送结果: {dingtalk_result}")
-        
-        # 发送到飞书
+            ok, cr = self._send_to_dingtalk(message)
+            results.append(ok)
+            channel_results.append(cr)
+            self.logger.debug("钉钉通知发送结果: %s", cr)
         if self.feishu_webhook_url:
-            feishu_result = self._send_to_feishu(message)
-            results.append(feishu_result)
-            self.logger.debug(f"飞书通知发送结果: {feishu_result}")
-        
-        # 发送到Bark
+            ok, cr = self._send_to_feishu(message)
+            results.append(ok)
+            channel_results.append(cr)
+            self.logger.debug("飞书通知发送结果: %s", cr)
         if self.bark_url:
-            # 对于Bark，我们使用专门的格式，标题为“飞牛NAS通知”，内容为具体的事件
             bark_message = self._build_bark_message(event_type, event_data, timestamp, raw_log)
-            bark_result = self._send_to_bark(bark_message)
-            results.append(bark_result)
-            self.logger.debug(f"Bark通知发送结果: {bark_result}")
-        
-        # 发送到 PushPlus
+            ok, cr = self._send_to_bark(bark_message)
+            results.append(ok)
+            channel_results.append(cr)
+            self.logger.debug("Bark通知发送结果: %s", cr)
         if self.pushplus_params:
             pushplus_message = self._build_bark_message(event_type, event_data, timestamp, raw_log)
-            pushplus_result = self._send_to_pushplus(pushplus_message)
-            results.append(pushplus_result)
-            self.logger.debug(f"PushPlus通知发送结果: {pushplus_result}")
+            ok, cr = self._send_to_pushplus(pushplus_message)
+            results.append(ok)
+            channel_results.append(cr)
+            self.logger.debug("PushPlus通知发送结果: %s", cr)
         
-        # 处理结果
         if results and any(results):  # 至少一个平台发送成功
             self.sent_events[event_fingerprint] = time.time()
             self._record_send_result(True)
             self.logger.info(f"通知发送成功: {event_type}")
-            return True
+            return True, channel_results
         else:
             self._record_send_result(False)
             self.logger.warning(f"所有通知发送失败: {event_type}")
-            return False
+            return False, channel_results
     
     def _handle_disk_event(self, event_type: str, event_data: Dict[str, Any], raw_log: str, timestamp: str) -> bool:
         """处理磁盘事件，将其添加到合并缓存中"""
@@ -560,79 +553,75 @@ class MultiPlatformNotifier:
             return []
         return [u.strip() for u in str(raw).split('|') if u.strip()]
 
-    def _send_to_wechat(self, message: MultiPlatformMessage) -> bool:
-        """发送到企业微信，支持同一渠道多个Webhook地址"""
+    def _channel_result(self, channel_name: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """从多次请求结果聚合成一条渠道结果（多 URL 取首个成功或最后一条）。"""
+        if not results:
+            return {"channel": channel_name, "success": False, "response": None, "error": "未请求"}
+        ok = next((r for r in results if r.get("success")), None)
+        last = results[-1]
+        if ok:
+            return {"channel": channel_name, "success": True, "response": ok.get("response"), "error": None}
+        return {
+            "channel": channel_name,
+            "success": False,
+            "response": last.get("response"),
+            "error": last.get("error") or "请求失败",
+        }
+
+    def _send_to_wechat(self, message: MultiPlatformMessage) -> tuple:
+        """发送到企业微信。返回 (是否有任一成功, 渠道结果 dict)。"""
         payload = message.to_wechat_format()
         urls = self._iter_urls(self.wechat_webhook_url)
-        any_success = False
-        for url in urls:
-            result = self.connection_pool.post(url, payload)
-            if result is not None:
-                any_success = True
-        return any_success
-    
-    def _send_to_dingtalk(self, message: MultiPlatformMessage) -> bool:
-        """发送到钉钉，支持同一渠道多个Webhook地址"""
+        results = [self.connection_pool.post(url, payload) for url in urls]
+        any_ok = any(r.get("success") for r in results)
+        return any_ok, self._channel_result("企业微信", results)
+
+    def _send_to_dingtalk(self, message: MultiPlatformMessage) -> tuple:
+        """发送到钉钉。返回 (是否有任一成功, 渠道结果 dict)。"""
         payload = message.to_dingtalk_format()
         urls = self._iter_urls(self.dingtalk_webhook_url)
-        any_success = False
-        for url in urls:
-            result = self.connection_pool.post(url, payload)
-            if result is not None:
-                any_success = True
-        return any_success
-    
-    def _send_to_feishu(self, message: MultiPlatformMessage) -> bool:
-        """发送到飞书，支持同一渠道多个Webhook地址"""
+        results = [self.connection_pool.post(url, payload) for url in urls]
+        any_ok = any(r.get("success") for r in results)
+        return any_ok, self._channel_result("钉钉", results)
+
+    def _send_to_feishu(self, message: MultiPlatformMessage) -> tuple:
+        """发送到飞书。返回 (是否有任一成功, 渠道结果 dict)。"""
         payload = message.to_feishu_format()
         urls = self._iter_urls(self.feishu_webhook_url)
-        any_success = False
-        for url in urls:
-            result = self.connection_pool.post(url, payload)
-            if result is not None:
-                any_success = True
-        return any_success
-    
-    def _send_to_bark(self, message: MultiPlatformMessage) -> bool:
-        """发送到Bark。支持占位符：{title}、{content}；若仅有 {content} 则把标题并入正文避免丢失。直连 URL 则拼接 /标题/内容。"""
+        results = [self.connection_pool.post(url, payload) for url in urls]
+        any_ok = any(r.get("success") for r in results)
+        return any_ok, self._channel_result("飞书", results)
+
+    def _send_to_bark(self, message: MultiPlatformMessage) -> tuple:
+        """发送到Bark。返回 (是否有任一成功, 渠道结果 dict)。"""
         urls = self._iter_urls(self.bark_url)
         if not urls:
-            return False
-
+            return False, {"channel": "Bark", "success": False, "response": None, "error": "未配置"}
         encoded_title = urllib.parse.quote(message.title, safe='')
         encoded_content = urllib.parse.quote(message.content, safe='')
         encoded_title_and_content = urllib.parse.quote(message.title + '\n\n' + message.content, safe='')
-
-        any_success = False
+        results = []
         for raw_url in urls:
             if '{title}' in raw_url and '{content}' in raw_url:
                 bark_push_url = raw_url.replace('{title}', encoded_title).replace('{content}', encoded_content)
             elif '{content}' in raw_url:
-                # 仅有 {content} 时无 {title}，把事件标题放进正文首行，避免推送看不到标题
                 bark_push_url = raw_url.replace('{content}', encoded_title_and_content)
             else:
                 bark_push_url = f"{raw_url.rstrip('/')}/{encoded_title}/{encoded_content}"
-            result = self.connection_pool.get(bark_push_url)
-            if result:
-                any_success = True
-        return any_success
+            results.append(self.connection_pool.get(bark_push_url))
+        any_ok = any(r.get("success") for r in results)
+        return any_ok, self._channel_result("Bark", results)
 
-    def _send_to_pushplus(self, message: MultiPlatformMessage) -> bool:
-        """
-        发送到 PushPlus。固定 POST http://www.pushplus.plus/send，请求体为用户配置的 JSON。
-        - title 的 value 若为 "{title}"：与 Bark 一致，用 message.title 作为推送标题，content 为 message.content。
-        - title 为用户自定义时：推送标题用用户填的 title，正文为「推送标题 + 正文」一起放入 content。
-        - content 始终替换为本次要推送的正文内容（或标题+正文）。
-        """
+    def _send_to_pushplus(self, message: MultiPlatformMessage) -> tuple:
+        """发送到 PushPlus。返回 (是否有任一成功, 渠道结果 dict)。"""
         param_list = self._iter_urls(self.pushplus_params)
         if not param_list:
-            return False
-        any_success = False
+            return False, {"channel": "PushPlus", "success": False, "response": None, "error": "未配置"}
+        results = []
         for param_str in param_list:
             try:
                 payload = json.loads(param_str)
                 if not isinstance(payload, dict) or 'token' not in payload:
-                    self.logger.warning("PushPlus 参数缺少 token，已跳过")
                     continue
                 user_title = (payload.get('title') or '').strip()
                 if user_title == '{title}':
@@ -643,14 +632,13 @@ class MultiPlatformNotifier:
                     final_content = message.title + '\n\n' + message.content
                 payload['title'] = final_title
                 payload['content'] = final_content
-                result = self.connection_pool.post(PUSHPLUS_URL, payload)
-                if result is not None:
-                    any_success = True
-            except json.JSONDecodeError as e:
-                self.logger.warning("PushPlus 参数 JSON 解析失败，已跳过: %s", e)
+                results.append(self.connection_pool.post(PUSHPLUS_URL, payload))
+            except json.JSONDecodeError:
+                results.append({"success": False, "response": None, "error": "参数 JSON 解析失败"})
             except Exception as e:
-                self.logger.warning("PushPlus 发送异常: %s", e)
-        return any_success
+                results.append({"success": False, "response": None, "error": str(e)[:80]})
+        any_ok = any(r.get("success") for r in results)
+        return any_ok, self._channel_result("PushPlus", results)
     
     def _generate_fingerprint(self, event_type: str, event_data: Dict[str, Any]) -> str:
         """生成事件指纹（用于去重）"""
@@ -746,7 +734,9 @@ class MultiPlatformNotifier:
                       timestamp: str, raw_log: str) -> MultiPlatformMessage:
         """构建多平台消息"""
         
-        title = self.EVENT_TITLES.get(event_type, f"📋 飞牛NAS-系统事件: {event_type}")
+        title = self._with_title_prefix(
+            self.EVENT_TITLES.get(event_type, f"📋 {self.title_prefix}-系统事件: {event_type}")
+        )
         content = self._build_content(event_type, event_data, timestamp, raw_log)
         
         return MultiPlatformMessage(title=title, content=content)
@@ -1235,43 +1225,33 @@ class MultiPlatformNotifier:
             return {"success": False, "success_count": 0, "fail_count": 0}
         
         # 构建消息
-        title = self.EVENT_TITLES.get(event_type, f"📋 飞牛NAS-系统事件: {event_type}")
+        title = self._with_title_prefix(
+            self.EVENT_TITLES.get(event_type, f"📋 {self.title_prefix}-系统事件: {event_type}")
+        )
         content = self._build_system_content(event_type, event_data, message)
         multi_msg = MultiPlatformMessage(title=title, content=content)
         
         results = []
-        
-        # 发送到企业微信
         if self.wechat_webhook_url:
-            wechat_result = self._send_to_wechat(multi_msg)
-            results.append(wechat_result)
-            self.logger.debug(f"企业微信系统通知发送结果: {wechat_result}")
-        
-        # 发送到钉钉
+            ok, cr = self._send_to_wechat(multi_msg)
+            results.append(ok)
+            self.logger.debug("企业微信系统通知: %s", cr)
         if self.dingtalk_webhook_url:
-            dingtalk_result = self._send_to_dingtalk(multi_msg)
-            results.append(dingtalk_result)
-            self.logger.debug(f"钉钉系统通知发送结果: {dingtalk_result}")
-        
-        # 发送到飞书
+            ok, cr = self._send_to_dingtalk(multi_msg)
+            results.append(ok)
+            self.logger.debug("钉钉系统通知: %s", cr)
         if self.feishu_webhook_url:
-            feishu_result = self._send_to_feishu(multi_msg)
-            results.append(feishu_result)
-            self.logger.debug(f"飞书系统通知发送结果: {feishu_result}")
-        
-        # 发送到Bark（系统通知直接用已包含完整 message 的 multi_msg，避免 DND 汇总等正文丢失）
+            ok, cr = self._send_to_feishu(multi_msg)
+            results.append(ok)
+            self.logger.debug("飞书系统通知: %s", cr)
         if self.bark_url:
-            bark_result = self._send_to_bark(multi_msg)
-            results.append(bark_result)
-            self.logger.debug(f"Bark系统通知发送结果: {bark_result}")
-        
-        # 发送到 PushPlus
+            ok, cr = self._send_to_bark(multi_msg)
+            results.append(ok)
+            self.logger.debug("Bark系统通知: %s", cr)
         if self.pushplus_params:
-            pushplus_result = self._send_to_pushplus(multi_msg)
-            results.append(pushplus_result)
-            self.logger.debug(f"PushPlus系统通知发送结果: {pushplus_result}")
-        
-        # 处理结果：返回是否成功及成功/失败渠道数（供勿扰汇总等展示）
+            ok, cr = self._send_to_pushplus(multi_msg)
+            results.append(ok)
+            self.logger.debug("PushPlus系统通知: %s", cr)
         success_count = sum(1 for r in results if r)
         fail_count = len(results) - success_count
         any_ok = bool(results and success_count > 0)

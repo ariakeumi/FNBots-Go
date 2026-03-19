@@ -4,6 +4,7 @@
 支持勿扰模式：时段内缓冲事件，结束后汇总为一条推送
 """
 
+import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
@@ -12,6 +13,39 @@ from typing import Dict, Any, List
 from zoneinfo import ZoneInfo
 
 from .multi_platform_notifier import MultiPlatformNotifier
+
+
+def _truncate_channel_results_for_storage(channel_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """截断每条渠道的 response 便于入库，避免 detail 超长。"""
+    out = []
+    for cr in channel_results:
+        c = dict(cr)
+        r = c.get("response")
+        if r is not None and isinstance(r, dict):
+            s = json.dumps(r, ensure_ascii=False)
+            if len(s) > 500:
+                c["response"] = {"_preview": s[:500] + "…"}
+        out.append(c)
+    return out
+
+
+def _event_summary(event_type: str, event_data: Dict[str, Any]) -> str:
+    """从 event_data 生成一条简短摘要，用于推送记录列表展示。"""
+    data = event_data.get("data") if isinstance(event_data.get("data"), dict) else {}
+    parts = []
+    if event_data.get("user") or event_data.get("IP"):
+        parts.append(f"{event_data.get('user', '')}@{event_data.get('IP', '')}".strip("@"))
+    if data.get("DISPLAY_NAME") or data.get("APP_NAME"):
+        parts.append(data.get("DISPLAY_NAME") or data.get("APP_NAME", ""))
+    if event_data.get("name"):
+        parts.append(event_data.get("name", ""))
+    if event_data.get("message"):
+        msg = (event_data.get("message") or "")[:80]
+        if msg:
+            parts.append(msg)
+    if not parts:
+        parts.append(event_type)
+    return " | ".join(str(p).strip() for p in parts if p)[:200]
 
 
 @dataclass
@@ -44,6 +78,7 @@ class UnifiedNotifier:
             feishu_webhook_url=config.feishu_webhook_url,
             bark_url=config.bark_url,
             pushplus_params=config.pushplus_params,
+            title_prefix=getattr(config, "title_prefix", "飞牛NAS"),
             dedup_window=config.dedup_window,
             pool_size=config.http_pool_size,
             retries=config.http_retry_count,
@@ -60,6 +95,7 @@ class UnifiedNotifier:
             feishu_webhook_url=self.config.feishu_webhook_url,
             bark_url=self.config.bark_url,
             pushplus_params=self.config.pushplus_params,
+            title_prefix=getattr(self.config, "title_prefix", "飞牛NAS"),
             dedup_window=self.config.dedup_window,
             pool_size=self.config.http_pool_size,
             retries=self.config.http_retry_count,
@@ -136,11 +172,7 @@ class UnifiedNotifier:
             success = out.get("success", False) if isinstance(out, dict) else bool(out)
             sc = out.get("success_count", 0) if isinstance(out, dict) else 0
             fc = out.get("fail_count", 0) if isinstance(out, dict) else 0
-            try:
-                from utils.push_stats import record as record_push
-                record_push(success)
-            except Exception:
-                pass
+            # 勿扰汇总不参与推送汇总统计，仅事件推送（send_notification）统计
             # 再发一条短消息：勿扰汇总推送结果（成功/失败渠道数）
             result_msg = f"本次汇总推送：成功 {sc} 个渠道，失败 {fc} 个渠道"
             self.multi_platform_notifier.send_system_notification(
@@ -180,12 +212,24 @@ class UnifiedNotifier:
                 details={"event_type": event_type, "buffered": True},
             )
         # 通过多平台通知器发送
-        success = self.multi_platform_notifier.send_notification(
+        success, channel_results = self.multi_platform_notifier.send_notification(
             event_type, event_data, raw_log, timestamp
         )
         try:
             from utils.push_stats import record as record_push
             record_push(success)
+        except Exception:
+            pass
+        try:
+            from utils.push_history import add_record as add_push_history
+            summary = _event_summary(event_type, event_data)
+            detail = {
+                "event_type": event_type,
+                "timestamp": timestamp,
+                "event_data": event_data,
+                "channel_results": _truncate_channel_results_for_storage(channel_results),
+            }
+            add_push_history(success=success, event_type=event_type, summary=summary, detail=detail)
         except Exception:
             pass
         # 确定实际使用的方法（检查哪些平台真正发送了）
@@ -243,12 +287,8 @@ class UnifiedNotifier:
             event_type, message, additional_info
         )
         success = out.get("success", False) if isinstance(out, dict) else bool(out)
-        try:
-            from utils.push_stats import record as record_push
-            record_push(success)
-        except Exception:
-            pass
-        
+        # 系统通知（APP_START/APP_STOP/勿扰汇总等）不参与推送汇总统计，仅事件推送（send_notification）统计
+
         # 确定实际使用的方法（检查哪些平台真正发送了）
         active_platforms = []
         if self.config.wechat_webhook_url:

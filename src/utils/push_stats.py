@@ -17,13 +17,18 @@ _DEFAULT = {"total": {"success": 0, "fail": 0}, "daily": {}}
 
 
 def init(cursor_dir: str) -> None:
-    """初始化统计文件路径。cursor_dir 可为相对路径（相对当前工作目录）。"""
+    """初始化统计文件路径。cursor_dir 可为相对路径（相对当前工作目录）。同时初始化推送记录 DB。"""
     global _stats_path
     if not cursor_dir:
         cursor_dir = "./data/cursor"
     abs_dir = os.path.abspath(os.path.join(os.getcwd(), cursor_dir))
     Path(abs_dir).mkdir(parents=True, exist_ok=True)
     _stats_path = os.path.join(abs_dir, "push_stats.json")
+    try:
+        from utils.push_history import init as init_push_history
+        init_push_history(cursor_dir)
+    except Exception:
+        pass
 
 
 def _load() -> Dict[str, Any]:

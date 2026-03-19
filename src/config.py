@@ -18,6 +18,9 @@ class Config:
     feishu_webhook_url: str = ""   # 飞书Webhook URL
     bark_url: str = ""  # Bark推送URL
     pushplus_params: str = ""  # PushPlus 推送参数（JSON 字符串，多个用 | 分隔）
+    
+    # 通知标题配置
+    title_prefix: str = "飞牛NAS"  # 所有事件标题前缀（默认：飞牛NAS）
 
     # 监控配置
     monitor_events: List[str] = field(default_factory=lambda: [
@@ -133,6 +136,8 @@ class Config:
             self.bark_url = data["bark_url"]
         if "pushplus_params" in data and isinstance(data["pushplus_params"], str):
             self.pushplus_params = data["pushplus_params"]
+        if "title_prefix" in data and isinstance(data["title_prefix"], str):
+            self.title_prefix = (data["title_prefix"] or "飞牛NAS").strip() or "飞牛NAS"
         if "log_retention_days" in data and data["log_retention_days"] is not None:
             try:
                 self.log_retention_days = int(data["log_retention_days"])
