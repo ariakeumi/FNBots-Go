@@ -118,6 +118,18 @@ BASE_DIR = _get_base_dir()
 CONFIG_FILE = BASE_DIR / "config" / "config.json"
 
 
+def _title_prefix_from_dict(d: dict, key: str = "title_prefix") -> str:
+    """从配置或请求体读取标题前缀：键不存在时默认「飞牛NAS」；键存在且为字符串时可留空。"""
+    if key not in d:
+        return "飞牛NAS"
+    v = d[key]
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v.strip()
+    return str(v).strip()
+
+
 def _load_raw_config() -> dict:
     if CONFIG_FILE.exists():
         try:
@@ -414,7 +426,7 @@ def create_app(on_config_saved=None) -> Flask:
             "events_by_category": events_by_category,
             "selected_events": monitor_events,
             "channels": channels,
-            "title_prefix": (raw.get("title_prefix") or "飞牛NAS").strip() or "飞牛NAS",
+            "title_prefix": _title_prefix_from_dict(raw),
             "log_retention_days": int(raw.get("log_retention_days", raw.get("max_log_age", 7))),
             "logger_poll_interval": int(raw.get("logger_poll_interval", 3)),
             "logger_db_path": raw.get(
@@ -443,8 +455,8 @@ def create_app(on_config_saved=None) -> Flask:
         dnd_start_time = (payload.get("dnd_start_time") or "22:00").strip()
         dnd_end_time = (payload.get("dnd_end_time") or "07:00").strip()
         web_password_enabled = bool(payload.get("web_password_enabled", True))
-        title_prefix = (payload.get("title_prefix") or "飞牛NAS").strip() or "飞牛NAS"
-        if len(title_prefix) > 20:
+        title_prefix = _title_prefix_from_dict(payload)
+        if title_prefix and len(title_prefix) > 20:
             return jsonify({"ok": False, "message": "标题前缀过长（最多 20 个字符）。"}), 400
 
         if dnd_enabled:
@@ -572,7 +584,7 @@ def create_app(on_config_saved=None) -> Flask:
                 feishu_webhook_url=raw.get("feishu_webhook_url", ""),
                 bark_url=raw.get("bark_url", ""),
                 pushplus_params=raw.get("pushplus_params", ""),
-                title_prefix=(raw.get("title_prefix") or "飞牛NAS").strip() or "飞牛NAS",
+                title_prefix=_title_prefix_from_dict(raw),
                 dedup_window=int(raw.get("dedup_window", 300)),
                 pool_size=int(raw.get("http_pool_size", 10)),
                 retries=int(raw.get("http_retry_count", 3)),
@@ -674,7 +686,8 @@ def create_app(on_config_saved=None) -> Flask:
   <title>推送记录 - FnMessageBots</title>
   <style>
     body { margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f3f4f6; color: #111827; }
-    h1 { font-size: 20px; margin: 0 0 16px; }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    .page-hint { font-size: 13px; color: #6b7280; line-height: 1.5; margin: 0 0 16px; }
     .toolbar { margin-bottom: 12px; display: flex; gap: 8px; align-items: center; }
     .btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; border: 1px solid #e5e7eb; background: #fff; cursor: pointer; color: #374151; text-decoration: none; }
     .btn:hover { background: #f3f4f6; }
@@ -696,6 +709,7 @@ def create_app(on_config_saved=None) -> Flask:
 </head>
 <body>
   <h1>推送记录</h1>
+  <p class="page-hint">最多存储一万条数据，超过限制会自动删除。</p>
   <div class="toolbar">
     <a class="btn" href="/">返回配置页</a>
     <span>筛选：</span>
@@ -1337,7 +1351,7 @@ def create_app(on_config_saved=None) -> Flask:
           <div>
             <div class="field-label">事件标题前缀</div>
             <input id="input-title-prefix" type="text" placeholder="飞牛NAS" />
-            <div class="field-helper">用于所有推送事件标题，默认：飞牛NAS</div>
+            <div class="field-helper">默认「飞牛NAS」；留空则标题仅为事件说明（如「🔐 登录成功通知」），不含「前缀-」。</div>
           </div>
         </div>
         <div class="dnd-section" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
@@ -1668,7 +1682,8 @@ def create_app(on_config_saved=None) -> Flask:
         document.getElementById("input-log-days").value = data.log_retention_days || 7;
         document.getElementById("input-poll-interval").value = data.logger_poll_interval || 3;
         document.getElementById("input-db-path").value = data.logger_db_path || "";
-        document.getElementById("input-title-prefix").value = data.title_prefix || "飞牛NAS";
+        document.getElementById("input-title-prefix").value =
+          typeof data.title_prefix === "string" ? data.title_prefix : "飞牛NAS";
         const dndEnabled = !!data.dnd_enabled;
         document.getElementById("input-dnd-enabled").checked = dndEnabled;
         document.getElementById("input-dnd-start").value = data.dnd_start_time || "22:00";

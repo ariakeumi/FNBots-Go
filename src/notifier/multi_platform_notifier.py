@@ -9,7 +9,7 @@ import logging
 import hashlib
 import urllib.parse
 import threading
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -265,7 +265,8 @@ class MultiPlatformNotifier:
         self.feishu_webhook_url = feishu_webhook_url
         self.bark_url = bark_url
         self.pushplus_params = pushplus_params or ""
-        self.title_prefix = (title_prefix or "飞牛NAS").strip() or "飞牛NAS"
+        # 允许空前缀：留空时标题去掉「飞牛NAS-」，仅保留事件类型文案（及图标）
+        self.title_prefix = title_prefix.strip() if isinstance(title_prefix, str) else "飞牛NAS"
         self.dedup_window = dedup_window
         
         # 连接池
@@ -315,10 +316,21 @@ class MultiPlatformNotifier:
 
         self.logger.info(f"多平台通知器初始化完成，支持平台: {', '.join(platforms) if platforms else '无'}, 去重窗口: {dedup_window}秒")
 
+    def _fallback_event_title(self, event_type: str) -> str:
+        """未知事件类型的标题模板（与 EVENT_TITLES 中占位格式一致）。"""
+        if self.title_prefix:
+            return f"📋 {self.title_prefix}-系统事件: {event_type}"
+        return f"📋 系统事件: {event_type}"
+
     def _with_title_prefix(self, title: str) -> str:
-        """把标题中的默认前缀“飞牛NAS”替换为配置前缀。"""
+        """把标题中的默认「飞牛NAS」替换为配置前缀；前缀留空时去掉「飞牛NAS-」仅保留事件类型部分。"""
         if not isinstance(title, str):
             return str(title)
+        if not self.title_prefix:
+            t = title.replace("飞牛NAS-", "", 1)
+            if "飞牛NAS" in t:
+                t = t.replace("飞牛NAS", "")
+            return t
         return title.replace("飞牛NAS", self.title_prefix)
 
     def _record_send_result(self, success: bool):
@@ -398,54 +410,64 @@ class MultiPlatformNotifier:
                 if self._stop_flag:
                     break
     
-    def _send_merged_disk_event(self, event_type: str, event_list: List[Dict], time_window: int = 0):
-        """发送合并的磁盘事件。event_list 为磁盘信息列表，每项含 disk/model/serial 等字段。"""
+    def _send_merged_disk_event(
+        self, event_type: str, event_list: List[Dict], time_window: int = 0
+    ) -> Tuple[bool, List[Dict[str, Any]]]:
+        """发送合并的磁盘事件。event_list 为磁盘信息列表，每项含 disk/model/serial 等字段。
+        返回 (是否至少一渠道成功, 各渠道结果列表)，与 send_notification 一致供推送记录展示。"""
         if not event_list:
-            return
-            
+            return False, []
+
         # 创建合并事件数据
         merged_data = {
             'merged_disks': event_list,
             'count': len(event_list),
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
-        
+
         # 构建消息
         title = self._with_title_prefix(
-            self.EVENT_TITLES.get(event_type, f"📋 {self.title_prefix}-系统事件: {event_type}")
+            self.EVENT_TITLES.get(event_type, self._fallback_event_title(event_type))
         )
         content = self._build_content(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
         message = MultiPlatformMessage(title=title, content=content)
-        
-        results = []
+
+        results: List[bool] = []
+        channel_results: List[Dict[str, Any]] = []
         if self.wechat_webhook_url:
             ok, cr = self._send_to_wechat(message)
             results.append(ok)
+            channel_results.append(cr)
             self.logger.debug("合并事件-企业微信: %s", cr)
         if self.dingtalk_webhook_url:
             ok, cr = self._send_to_dingtalk(message)
             results.append(ok)
+            channel_results.append(cr)
             self.logger.debug("合并事件-钉钉: %s", cr)
         if self.feishu_webhook_url:
             ok, cr = self._send_to_feishu(message)
             results.append(ok)
+            channel_results.append(cr)
             self.logger.debug("合并事件-飞书: %s", cr)
         if self.bark_url:
             bark_message = self._build_bark_message(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
             ok, cr = self._send_to_bark(bark_message)
             results.append(ok)
+            channel_results.append(cr)
             self.logger.debug("合并事件-Bark: %s", cr)
         if self.pushplus_params:
             pushplus_message = self._build_bark_message(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
             ok, cr = self._send_to_pushplus(pushplus_message)
             results.append(ok)
+            channel_results.append(cr)
             self.logger.debug("合并事件-PushPlus: %s", cr)
         if results and any(results):
             self._record_send_result(True)
             self.logger.info(f"合并事件发送成功: {event_type}, 数量: {len(event_list)}")
-        else:
-            self._record_send_result(False)
-            self.logger.warning(f"合并事件发送失败: {event_type}, 数量: {len(event_list)}")
+            return True, channel_results
+        self._record_send_result(False)
+        self.logger.warning(f"合并事件发送失败: {event_type}, 数量: {len(event_list)}")
+        return False, channel_results
     
     def send_notification(self, 
                          event_type: str,
@@ -468,8 +490,8 @@ class MultiPlatformNotifier:
         if event_type in ['DiskWakeup', 'DiskSpindown']:
             merged_disks = event_data.get('merged_disks') if isinstance(event_data.get('merged_disks'), list) else None
             if merged_disks:
-                self._send_merged_disk_event(event_type, merged_disks, 0)
-                return True, []  # 合并发送不区分渠道
+                success, crs = self._send_merged_disk_event(event_type, merged_disks, 0)
+                return success, crs
             ok = self._handle_disk_event(event_type, event_data, raw_log, timestamp)
             return ok, []
         
@@ -735,7 +757,7 @@ class MultiPlatformNotifier:
         """构建多平台消息"""
         
         title = self._with_title_prefix(
-            self.EVENT_TITLES.get(event_type, f"📋 {self.title_prefix}-系统事件: {event_type}")
+            self.EVENT_TITLES.get(event_type, self._fallback_event_title(event_type))
         )
         content = self._build_content(event_type, event_data, timestamp, raw_log)
         
@@ -1226,7 +1248,7 @@ class MultiPlatformNotifier:
         
         # 构建消息
         title = self._with_title_prefix(
-            self.EVENT_TITLES.get(event_type, f"📋 {self.title_prefix}-系统事件: {event_type}")
+            self.EVENT_TITLES.get(event_type, self._fallback_event_title(event_type))
         )
         content = self._build_system_content(event_type, event_data, message)
         multi_msg = MultiPlatformMessage(title=title, content=content)
