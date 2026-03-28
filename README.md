@@ -94,22 +94,42 @@ python tools/log_manager.py cleanup 30
 
 - 默认：`/usr/trim/var/eventlogger_service/logger_data.db3`
 - 覆盖：`LOGGER_DB_PATH=/path/to/logger_data.db3` 或在 `config.json` 中设置 `logger_db_path`
-- Docker 需将该文件或所在目录以只读等方式挂载进容器（参见 `docker-compose.yml`）。
+- Docker 需将该文件或所在目录以只读等方式挂载进容器（见下方 Compose 示例或仓库内 `docker-compose.yml`）。
 
 ### 5. 启动
 
-**依赖**：Python 3.9+（见 `pyproject.toml`）。本地可先安装依赖：`pip install -e .` 或 `pip install -r requirements.txt`（与镜像一致）。
+#### 使用 Docker Compose（推荐，官方镜像）
 
-```bash
-# Docker Compose（推荐）
-docker compose up -d
-docker compose logs -f
+在任意目录新建 `docker-compose.yml`，内容如下（或在克隆本仓库后对照修改）：
 
-# 本地（项目根目录）
-PYTHONPATH=. LOGGER_DB_PATH=./logger_data.db3 WECHAT_WEBHOOK_URL=xxx python3 src/main.py
+```yaml
+services:
+  fn-message-bot:
+    image: sunanang/fn-message-bots:latest
+    container_name: fn-message-bot
+    restart: unless-stopped
+    ports:
+      - 18080:18080
+    volumes:
+      - ./data/logs:/app/data/logs:rw       # 数据目录，可修改
+      - ./data/cursor:/app/data/cursor:rw   # 数据目录，可修改
+      - /usr/trim/var/eventlogger_service:/usr/trim/var/eventlogger_service:ro  # 飞牛系统 eventlogger 目录，路径勿改
+      - ./config:/app/config:rw             # 配置目录，可修改
+    environment:
+      - TZ=Asia/Shanghai
 ```
 
-数据与配置建议持久化挂载：`./data/logs`、`./data/cursor`、`./config`。Compose 已映射 `18080:18080`，浏览器访问 `http://<本机IP>:18080` 打开 Web 配置页。
+浏览器访问 `http://<本机IP>:18080` 打开 Web 配置页。`./data/logs`、`./data/cursor`、`./config` 为相对 compose 文件所在目录的路径，可按需调整左侧宿主机路径。
+
+**从源码构建**：若使用仓库根目录自带的 `docker-compose.yml`（`build: .`、服务名可能为 `fn-message-bots`），同样在项目根执行 `docker compose up -d` 即可。
+
+#### 本地运行（无 Docker）
+
+**依赖**：Python 3.9+（见 `pyproject.toml`）。先安装依赖：`pip install -e .` 或 `pip install -r requirements.txt`（与镜像一致）。
+
+```bash
+PYTHONPATH=. LOGGER_DB_PATH=./logger_data.db3 WECHAT_WEBHOOK_URL=xxx python3 src/main.py
+```
 
 ## 项目结构
 
