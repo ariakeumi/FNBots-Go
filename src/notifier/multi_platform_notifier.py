@@ -265,8 +265,10 @@ class MultiPlatformNotifier:
         self.feishu_webhook_url = feishu_webhook_url
         self.bark_url = bark_url
         self.pushplus_params = pushplus_params or ""
-        # 允许空前缀：留空时标题去掉「飞牛NAS-」，仅保留事件类型文案（及图标）
-        self.title_prefix = title_prefix.strip() if isinstance(title_prefix, str) else "飞牛NAS"
+        if not isinstance(title_prefix, str):
+            self.title_prefix = "飞牛NAS"
+        else:
+            self.title_prefix = (title_prefix or "").strip() or "飞牛NAS"
         self.dedup_window = dedup_window
         
         # 连接池

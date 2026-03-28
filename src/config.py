@@ -20,7 +20,7 @@ class Config:
     pushplus_params: str = ""  # PushPlus 推送参数（JSON 字符串，多个用 | 分隔）
     
     # 通知标题配置
-    title_prefix: str = "飞牛NAS"  # 推送标题前缀；配置中可留空，留空则标题不含「前缀-」仅事件类型
+    title_prefix: str = "飞牛NAS"  # 推送标题前缀；未配置或空白时使用默认「飞牛NAS」
 
     # 监控配置
     monitor_events: List[str] = field(default_factory=lambda: [
@@ -74,6 +74,7 @@ class Config:
         self._load_from_env()
         # 然后从配置文件加载，但仅当配置项未从环境变量设置时才覆盖
         self._load_from_file_skip_if_set()
+        self.title_prefix = (self.title_prefix or "").strip() or "飞牛NAS"
         self._validate()
         self._ensure_directories()
     
@@ -137,7 +138,7 @@ class Config:
         if "pushplus_params" in data and isinstance(data["pushplus_params"], str):
             self.pushplus_params = data["pushplus_params"]
         if "title_prefix" in data and isinstance(data["title_prefix"], str):
-            self.title_prefix = data["title_prefix"].strip()
+            self.title_prefix = (data["title_prefix"] or "飞牛NAS").strip() or "飞牛NAS"
         if "log_retention_days" in data and data["log_retention_days"] is not None:
             try:
                 self.log_retention_days = int(data["log_retention_days"])

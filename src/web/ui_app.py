@@ -119,15 +119,14 @@ CONFIG_FILE = BASE_DIR / "config" / "config.json"
 
 
 def _title_prefix_from_dict(d: dict, key: str = "title_prefix") -> str:
-    """从配置或请求体读取标题前缀：键不存在时默认「飞牛NAS」；键存在且为字符串时可留空。"""
+    """从配置或请求体读取标题前缀；缺省、null 或纯空白时均为默认「飞牛NAS」。"""
     if key not in d:
         return "飞牛NAS"
     v = d[key]
     if v is None:
-        return ""
-    if isinstance(v, str):
-        return v.strip()
-    return str(v).strip()
+        return "飞牛NAS"
+    s = v.strip() if isinstance(v, str) else str(v).strip()
+    return s or "飞牛NAS"
 
 
 def _load_raw_config() -> dict:
@@ -1351,7 +1350,7 @@ def create_app(on_config_saved=None) -> Flask:
           <div>
             <div class="field-label">事件标题前缀</div>
             <input id="input-title-prefix" type="text" placeholder="飞牛NAS" />
-            <div class="field-helper">默认「飞牛NAS」；留空则标题仅为事件说明（如「🔐 登录成功通知」），不含「前缀-」。</div>
+            <div class="field-helper">默认「飞牛NAS」；未填写或仅空格保存后仍使用默认。</div>
           </div>
         </div>
         <div class="dnd-section" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
@@ -1682,8 +1681,7 @@ def create_app(on_config_saved=None) -> Flask:
         document.getElementById("input-log-days").value = data.log_retention_days || 7;
         document.getElementById("input-poll-interval").value = data.logger_poll_interval || 3;
         document.getElementById("input-db-path").value = data.logger_db_path || "";
-        document.getElementById("input-title-prefix").value =
-          typeof data.title_prefix === "string" ? data.title_prefix : "飞牛NAS";
+        document.getElementById("input-title-prefix").value = data.title_prefix || "飞牛NAS";
         const dndEnabled = !!data.dnd_enabled;
         document.getElementById("input-dnd-enabled").checked = dndEnabled;
         document.getElementById("input-dnd-start").value = data.dnd_start_time || "22:00";
