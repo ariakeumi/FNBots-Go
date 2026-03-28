@@ -32,7 +32,7 @@
 | `FEISHU_WEBHOOK_URL` | 飞书 |
 | `BARK_URL` | Bark |
 
-**PushPlus**：在 Web 或 `config.json` 中配置 `pushplus_params`，值为包含 `token` 的 JSON 字符串；多个渠道可用 `|` 分隔，例如 `{"token":"xxx"}|{"token":"yyy"}`。接口与参数说明见 [PushPlus 消息接口文档](https://www.pushplus.plus/doc/guide/api.html)；本仓库补充页见 [PushPlus](channels/pushplus.md)。
+**PushPlus**：在 Web 或 `config.json` 中配置 `pushplus_params`，值为包含 `token` 的 JSON 字符串；多个渠道可用 `|` 分隔，例如 `{"token":"xxx"}|{"token":"yyy"}`。接口与参数说明见 [PushPlus 消息接口文档](https://www.pushplus.plus/doc/guide/api.html)
 
 ## 捐赠
 
