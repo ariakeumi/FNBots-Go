@@ -156,6 +156,7 @@ PYTHONPATH=. LOGGER_DB_PATH=./logger_data.db3 WECHAT_WEBHOOK_URL=xxx python3 src
 ├── healthcheck.sh        # 容器健康检查
 ├── publish-amd64.sh      # AMD64 镜像构建与推送
 ├── publish-arm64.sh      # ARM64 镜像构建与推送
+├── LICENSE               # MIT 许可证全文
 └── pyproject.toml
 ```
 
@@ -177,6 +178,38 @@ PYTHONPATH=. LOGGER_DB_PATH=./logger_data.db3 WECHAT_WEBHOOK_URL=xxx python3 src
   </tr>
 </table>
 
+## 免责声明
+
+- **非官方项目**：本仓库为独立开源作品，与飞牛 NAS、企业微信、钉钉、飞书、Bark、PushPlus 等主体**无隶属、赞助或背书关系**；各产品名称与商标归权利人所有。
+- **按现状提供**：除开源许可证另有约定外，作者不对本软件的**正确性、完整性、安全性或持续可用性**作任何明示或默示担保；详见 [`LICENSE`](LICENSE) 中的免责声明条款。
+- **使用风险自负**：部署、配置 Webhook / 第三方推送、开放 Web 配置端口、挂载系统路径等行为均由使用者自行评估与承担；请妥善保管 `config.json`、访问密码与各类 Token，**勿将密钥提交到公开仓库**。
+- **数据与业务影响**：监控与推送依赖 NAS 日志库、网络与各通知渠道服务；**不保证**通知必达、实时或无遗漏，亦不对因依赖本软件而产生的业务中断、数据误解或决策损失承担责任。
+- **合规**：使用本软件及对接的第三方服务时，请遵守相应平台规则、隐私政策及所在地法律法规。
+
 ## 许可证
 
+本项目采用 [MIT License](https://opensource.org/licenses/MIT)。与 README 全文一致的纯文本见仓库根目录 [`LICENSE`](LICENSE)。
+
+```
 MIT License
+
+Copyright (c) 2024 Sunanang
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
