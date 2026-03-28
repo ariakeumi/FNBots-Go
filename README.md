@@ -147,16 +147,15 @@ PYTHONPATH=. LOGGER_DB_PATH=./logger_data.db3 WECHAT_WEBHOOK_URL=xxx python3 src
 - **Web 配置页打不开**：确认端口映射与防火墙；容器内可设 `UI_PORT` 并与 `ports` 一致。
 - **忘记 Web 密码**：在可信环境下编辑 `config.json`，删除 `web_password_salt` 与 `web_password_hash` 后重启，再在页面重新设置密码（或暂时将 `web_password_enabled` 设为 `false`）。
 
-##捐赠
+## 捐赠
 
-创作不易，为了项目的稳定和可持续发展，欢迎搭建捐赠支持
+创作不易，为了项目的稳定和可持续发展，欢迎大家捐赠支持
 <table>
   <tr>
     <td><img src="docs/images/wechat_pay.jpg" width="300" alt="图1说明" /></td>
     <td><img src="docs/images/ali_pay.jpg" width="300" alt="图2说明" /></td>
   </tr>
 </table>
-
 
 ## 许可证
 

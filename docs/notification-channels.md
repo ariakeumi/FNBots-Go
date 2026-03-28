@@ -33,3 +33,13 @@
 | `BARK_URL` | Bark |
 
 **PushPlus**：在 Web 或 `config.json` 中配置 `pushplus_params`，值为包含 `token` 的 JSON 字符串；多个渠道可用 `|` 分隔，例如 `{"token":"xxx"}|{"token":"yyy"}`。接口与参数说明见 [PushPlus 消息接口文档](https://www.pushplus.plus/doc/guide/api.html)；本仓库补充页见 [PushPlus](channels/pushplus.md)。
+
+## 捐赠
+
+创作不易，为了项目的稳定和可持续发展，欢迎大家捐赠支持
+<table>
+  <tr>
+    <td><img src="docs/images/wechat_pay.jpg" width="300" alt="图1说明" /></td>
+    <td><img src="docs/images/ali_pay.jpg" width="300" alt="图2说明" /></td>
+  </tr>
+</table>
