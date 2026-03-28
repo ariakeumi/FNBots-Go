@@ -2,6 +2,7 @@
 
 [← 推送渠道总览](../notification-channels.md) · [← README](../../README.md)
 
+本教程按照步骤，可以在微信接收消息，不局限于企业微信，更加方便
 首先进入 [企业微信官网](https://work.weixin.qq.com/)，注册企业。
 ![创建机器人步骤 1](images/wechat-step1.png)
 企业名称按照你想要的名称填写就 OK。这里要注意的是，<span style="color: #c62828;"><strong>一定要绑定管理员微信！！</strong></span>

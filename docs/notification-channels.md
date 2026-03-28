@@ -9,7 +9,7 @@
 
 | 渠道 | 说明 | 详细文档 |
 | --- | --- | --- |
-| 企业微信 | 群机器人 Webhook | [企业微信](channels/wechat.md) |
+| 企业微信（可以在微信接收消息） | 群机器人 Webhook | [企业微信](channels/wechat.md) |
 | 钉钉 | 群机器人 Webhook | [钉钉](channels/dingtalk.md) |
 | 飞书 | 群机器人 Webhook | [飞书](channels/feishu.md) |
 | Bark | iOS 推送（HTTP API） | [Bark](channels/bark.md) |
