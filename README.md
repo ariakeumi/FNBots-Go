@@ -50,14 +50,9 @@ python tools/log_manager.py cleanup 30
 
 ## 使用方法
 
-### 1. 配置通知渠道
+### 1. [配置通知渠道](docs/notification-channels.md)
 
-至少配置一个推送渠道，方式二选一：
-
-- **环境变量**（可选）：`WECHAT_WEBHOOK_URL`、`DINGTALK_WEBHOOK_URL`、`FEISHU_WEBHOOK_URL`、`BARK_URL`；企业微信也可使用兼容变量 `WEBHOOK_URL`
-- **Web 配置页**（推荐）：启动后访问 `http://<本机IP>:18080`（或映射端口），在页面中填写并保存
-
-**PushPlus**：在 Web 或 `config.json` 中配置 `pushplus_params`，值为包含 `token` 的 JSON 字符串；多个渠道可用 `|` 分隔，例如 `{"token":"xxx"}|{"token":"yyy"}`。
+至少配置一个推送渠道；环境变量与 Web 配置页二选一即可（亦可混用）。各平台图文说明见 **[配置通知渠道](docs/notification-channels.md)**（内含企业微信、钉钉、飞书、Bark、PushPlus 的独立文档入口）。
 
 未配置任何 Webhook / PushPlus 时进程仍可启动，仅提供 Web 配置页；配置完成后自动开始监控与推送。
 
@@ -130,6 +125,7 @@ PYTHONPATH=. LOGGER_DB_PATH=./logger_data.db3 WECHAT_WEBHOOK_URL=xxx python3 src
 ├── data/logs             # 运行日志与推送存储
 ├── data/cursor           # 轮询游标等
 ├── tools/log_manager.py
+├── docs/                 # 文档（notification-channels 与各推送渠道子页）
 ├── scripts/              # 辅助脚本（如推送历史种子数据等）
 ├── .github/workflows/    # Docker 多架构 manifest 合并
 │   ├── docker-manifest.yml

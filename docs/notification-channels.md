@@ -1,0 +1,35 @@
+# 配置通知渠道
+
+[← 返回 README](../README.md)
+
+至少配置一个推送渠道后，监控事件才会向外部推送。配置方式二选一（或混用：环境变量优先生效，未被环境变量覆盖的项可读 `config.json` / Web 页面）。
+
+
+## 推送渠道一览
+
+| 渠道 | 说明 | 详细文档 |
+| --- | --- | --- |
+| 企业微信 | 群机器人 Webhook | [企业微信](channels/wechat.md) |
+| 钉钉 | 群机器人 Webhook | [钉钉](channels/dingtalk.md) |
+| 飞书 | 群机器人 Webhook | [飞书](channels/feishu.md) |
+| Bark | iOS 推送（HTTP API） | [Bark](channels/bark.md) |
+| PushPlus | 微信模板消息等 | [官方消息接口文档](https://www.pushplus.plus/doc/guide/api.html) |
+
+## 按渠道打开文档
+
+- [企业微信](channels/wechat.md)
+- [钉钉](channels/dingtalk.md)
+- [飞书](channels/feishu.md)
+- [Bark](channels/bark.md)
+- [PushPlus 官方消息接口文档](https://www.pushplus.plus/doc/guide/api.html)
+
+## 环境变量速查
+
+| 环境变量 | 对应配置项 |
+| --- | --- |
+| `WECHAT_WEBHOOK_URL` 或兼容名 `WEBHOOK_URL` | 企业微信 |
+| `DINGTALK_WEBHOOK_URL` | 钉钉 |
+| `FEISHU_WEBHOOK_URL` | 飞书 |
+| `BARK_URL` | Bark |
+
+**PushPlus**：在 Web 或 `config.json` 中配置 `pushplus_params`，值为包含 `token` 的 JSON 字符串；多个渠道可用 `|` 分隔，例如 `{"token":"xxx"}|{"token":"yyy"}`。接口与参数说明见 [PushPlus 消息接口文档](https://www.pushplus.plus/doc/guide/api.html)；本仓库补充页见 [PushPlus](channels/pushplus.md)。
