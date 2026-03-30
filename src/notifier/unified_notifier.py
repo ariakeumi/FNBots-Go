@@ -52,7 +52,7 @@ def _event_summary(event_type: str, event_data: Dict[str, Any]) -> str:
 class NotificationResult:
     """通知发送结果"""
     success: bool
-    method: str  # 'wechat', 'dingtalk', 'feishu', 'multiple', 'none'
+    method: str  # 'wechat', 'dingtalk', 'feishu', 'bark', 'gotify', 'pushplus', 'multiple', 'none'
     details: Dict[str, Any] = None
 
 
@@ -77,6 +77,7 @@ class UnifiedNotifier:
             dingtalk_webhook_url=config.dingtalk_webhook_url,
             feishu_webhook_url=config.feishu_webhook_url,
             bark_url=config.bark_url,
+            gotify_url=config.gotify_url,
             pushplus_params=config.pushplus_params,
             title_prefix=getattr(config, "title_prefix", "飞牛NAS"),
             dedup_window=config.dedup_window,
@@ -94,6 +95,7 @@ class UnifiedNotifier:
             dingtalk_webhook_url=self.config.dingtalk_webhook_url,
             feishu_webhook_url=self.config.feishu_webhook_url,
             bark_url=self.config.bark_url,
+            gotify_url=self.config.gotify_url,
             pushplus_params=self.config.pushplus_params,
             title_prefix=getattr(self.config, "title_prefix", "飞牛NAS"),
             dedup_window=self.config.dedup_window,
@@ -242,6 +244,8 @@ class UnifiedNotifier:
             active_platforms.append('feishu')
         if self.config.bark_url:
             active_platforms.append('bark')
+        if self.config.gotify_url:
+            active_platforms.append('gotify')
         if self.config.pushplus_params:
             active_platforms.append('pushplus')
         
@@ -299,6 +303,8 @@ class UnifiedNotifier:
             active_platforms.append('feishu')
         if self.config.bark_url:
             active_platforms.append('bark')
+        if self.config.gotify_url:
+            active_platforms.append('gotify')
         if self.config.pushplus_params:
             active_platforms.append('pushplus')
         
@@ -350,6 +356,7 @@ class UnifiedNotifier:
                 'dingtalk': False,
                 'feishu': False,
                 'bark': False,
+                'gotify': False,
                 'pushplus': False,
             }
         }

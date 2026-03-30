@@ -3,6 +3,7 @@
   "dingtalk_webhook_url": "",
   "feishu_webhook_url": "",
   "bark_url": "",
+  "gotify_url": "",
   "monitor_events": [
     "LoginSucc",
     "LoginSucc2FA1",

@@ -52,7 +52,7 @@ class Application:
             # 加载配置（可不配置 Webhook，部署后通过 UI 配置）
             self.config = Config()
             init_push_stats(self.config.cursor_dir)
-            has_webhook = any([self.config.wechat_webhook_url, self.config.dingtalk_webhook_url, self.config.feishu_webhook_url, self.config.bark_url, self.config.pushplus_params])
+            has_webhook = any([self.config.wechat_webhook_url, self.config.dingtalk_webhook_url, self.config.feishu_webhook_url, self.config.bark_url, self.config.gotify_url, self.config.pushplus_params])
             if has_webhook:
                 print("配置加载完成（已配置推送渠道）")
             else:
@@ -80,6 +80,8 @@ class Application:
                 print(f"飞书Webhook: 已配置")
             if self.config.bark_url:
                 print(f"Bark: 已配置")
+            if self.config.gotify_url:
+                print(f"Gotify: 已配置")
             if self.config.pushplus_params:
                 print(f"PushPlus: 已配置")
             if not has_webhook:
@@ -134,6 +136,7 @@ class Application:
             self.config.dingtalk_webhook_url,
             self.config.feishu_webhook_url,
             self.config.bark_url,
+            self.config.gotify_url,
             self.config.pushplus_params,
         ])
         if self.notifier is None and has_webhook:

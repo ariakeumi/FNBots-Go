@@ -17,6 +17,7 @@ class Config:
     dingtalk_webhook_url: str = ""  # 钉钉Webhook URL
     feishu_webhook_url: str = ""   # 飞书Webhook URL
     bark_url: str = ""  # Bark推送URL
+    gotify_url: str = ""  # Gotify 推送URL（/message?token=...，多个用 | 分隔）
     pushplus_params: str = ""  # PushPlus 推送参数（JSON 字符串，多个用 | 分隔）
     
     # 通知标题配置
@@ -135,6 +136,8 @@ class Config:
             self.feishu_webhook_url = data["feishu_webhook_url"]
         if "bark_url" in data and isinstance(data["bark_url"], str):
             self.bark_url = data["bark_url"]
+        if "gotify_url" in data and isinstance(data["gotify_url"], str):
+            self.gotify_url = data["gotify_url"]
         if "pushplus_params" in data and isinstance(data["pushplus_params"], str):
             self.pushplus_params = data["pushplus_params"]
         if "title_prefix" in data and isinstance(data["title_prefix"], str):
@@ -183,6 +186,10 @@ class Config:
         if bark_url := os.getenv('BARK_URL'):
             self.bark_url = bark_url
             self._env_set_keys.add('bark_url')
+
+        if gotify_url := os.getenv('GOTIFY_URL'):
+            self.gotify_url = gotify_url
+            self._env_set_keys.add('gotify_url')
 
         # 监控事件
         if events := os.getenv('MONITOR_EVENTS'):
@@ -259,6 +266,9 @@ class Config:
         
         if self.bark_url and not self.bark_url.startswith('http'):
             raise ValueError("BARK_URL 必须是有效的URL")
+
+        if self.gotify_url and not self.gotify_url.startswith('http'):
+            raise ValueError("GOTIFY_URL 必须是有效的URL")
 
         # pushplus_params 为 JSON 或 JSON|JSON...，发送时再校验
         if self.pushplus_params:

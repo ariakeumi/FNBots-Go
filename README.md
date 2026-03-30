@@ -5,8 +5,8 @@
 ## 功能特性
 
 - **数据库轮询**：定时轮询 eventlogger 的 SQLite 数据库，仅处理启动后的新记录
-- **多平台通知**：企业微信、钉钉、飞书、Bark、PushPlus
-- **Web 配置页**：内置配置 UI（默认端口 `18080`），支持 Webhook、事件类型、勿扰、标题前缀、PushPlus 等；保存后热加载，一般无需重启
+- **多平台通知**：企业微信、钉钉、飞书、Bark、Gotify、PushPlus
+- **Web 配置页**：内置配置 UI（默认端口 `18080`），支持 Webhook、事件类型、勿扰、标题前缀、Gotify、PushPlus 等；保存后热加载，一般无需重启
 - **Web 访问控制**：可在页面中设置访问密码（`config.json` 内保存盐值与哈希）；支持关闭密码校验（`web_password_enabled`）
 - **智能去重**：时间窗口去重（默认 300 秒）
 - **磁盘事件合并**：同类型磁盘唤醒/休眠在时间窗口内合并推送
@@ -52,15 +52,15 @@ python tools/log_manager.py cleanup 30
 
 ### 1. [配置通知渠道](docs/notification-channels.md)
 
-至少配置一个推送渠道；环境变量与 Web 配置页二选一即可（亦可混用）。各平台图文说明见 **[配置通知渠道](docs/notification-channels.md)**（内含企业微信、钉钉、飞书、Bark、PushPlus 的独立文档入口）。
+至少配置一个推送渠道；环境变量与 Web 配置页二选一即可（亦可混用）。各平台图文说明见 **[配置通知渠道](docs/notification-channels.md)**（内含企业微信、钉钉、飞书、Bark、Gotify、PushPlus 的独立文档入口）。
 
-未配置任何 Webhook / PushPlus 时进程仍可启动，仅提供 Web 配置页；配置完成后自动开始监控与推送。
+未配置任何推送渠道时进程仍可启动，仅提供 Web 配置页；配置完成后自动开始监控与推送。
 
 ### 2. 主要配置项（`config/config.json`）
 
 | 项 | 说明 |
 | --- | --- |
-| `wechat_webhook_url` / `dingtalk_webhook_url` / `feishu_webhook_url` / `bark_url` | 各平台 Webhook 或 Bark URL |
+| `wechat_webhook_url` / `dingtalk_webhook_url` / `feishu_webhook_url` / `bark_url` / `gotify_url` | 各平台 Webhook / HTTP 推送 URL |
 | `pushplus_params` | PushPlus JSON（可多个，`\|` 分隔） |
 | `title_prefix` | 推送标题前缀，留空则使用默认「飞牛NAS」 |
 | `monitor_events` | 要监控的事件 ID 列表 |
@@ -82,6 +82,7 @@ python tools/log_manager.py cleanup 30
 除上述 Webhook 外，还可通过环境变量覆盖（**已设置的环境变量不会被 `config.json` 覆盖**）：
 
 - `LOGGER_DB_PATH`、`LOGGER_POLL_INTERVAL`
+- `WECHAT_WEBHOOK_URL`、`DINGTALK_WEBHOOK_URL`、`FEISHU_WEBHOOK_URL`、`BARK_URL`、`GOTIFY_URL`
 - `MONITOR_EVENTS`（逗号分隔）
 - `LOG_LEVEL`、`HTTP_POOL_SIZE`、`HTTP_RETRY_COUNT`、`HTTP_TIMEOUT`、`DEDUP_WINDOW`
 - `LOG_RETENTION_DAYS`、`MAX_LOG_AGE`
@@ -130,6 +131,16 @@ services:
 ```bash
 PYTHONPATH=. LOGGER_DB_PATH=./logger_data.db3 WECHAT_WEBHOOK_URL=xxx python3 src/main.py
 ```
+
+### 6. GitHub Actions 自动发布 Docker Hub
+
+仓库已提供自动发布工作流 [docker-publish.yml](/Users/umi/Documents/FNBots-Go/.github/workflows/docker-publish.yml)。当推送到 `main` / `master`，或推送 `v*` 版本标签时，会自动构建并推送 `linux/amd64` 与 `linux/arm64` 多架构镜像到 Docker Hub。
+
+使用前请在 GitHub 仓库中配置：
+
+- `DOCKERHUB_USERNAME`：Docker Hub 用户名
+- `DOCKERHUB_TOKEN`：Docker Hub Personal Access Token
+- 可选 `DOCKERHUB_IMAGE` Repository Variable：镜像名，默认 `sunanang/fn-message-bots`
 
 ## 项目结构
 

@@ -13,6 +13,7 @@
 | 钉钉 | 群机器人 Webhook | [钉钉](channels/dingtalk.md) |
 | 飞书 | 群机器人 Webhook | [飞书](channels/feishu.md) |
 | Bark | iOS 推送（HTTP API） | [Bark](channels/bark.md) |
+| Gotify | 自托管推送（HTTP API） | [Gotify](channels/gotify.md) |
 | PushPlus | 微信模板消息等 | [官方消息接口文档](https://www.pushplus.plus/doc/guide/api.html) |
 
 ## 按渠道打开文档
@@ -21,6 +22,7 @@
 - [钉钉](channels/dingtalk.md)
 - [飞书](channels/feishu.md)
 - [Bark](channels/bark.md)
+- [Gotify](channels/gotify.md)
 - [PushPlus 官方消息接口文档](https://www.pushplus.plus/doc/guide/api.html)
 
 ## 环境变量速查
@@ -31,6 +33,7 @@
 | `DINGTALK_WEBHOOK_URL` | 钉钉 |
 | `FEISHU_WEBHOOK_URL` | 飞书 |
 | `BARK_URL` | Bark |
+| `GOTIFY_URL` | Gotify |
 
 **PushPlus**：在 Web 或 `config.json` 中配置 `pushplus_params`，值为包含 `token` 的 JSON 字符串；多个渠道可用 `|` 分隔，例如 `{"token":"xxx"}|{"token":"yyy"}`。接口与参数说明见 [PushPlus 消息接口文档](https://www.pushplus.plus/doc/guide/api.html)
 

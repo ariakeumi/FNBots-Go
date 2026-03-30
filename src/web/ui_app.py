@@ -280,6 +280,7 @@ def create_app(on_config_saved=None) -> Flask:
         {"id": "dingtalk", "name": "钉钉"},
         {"id": "feishu", "name": "飞书"},
         {"id": "bark", "name": "Bark"},
+        {"id": "gotify", "name": "Gotify"},
         {"id": "pushplus", "name": "PushPlus"},
     ]
 
@@ -410,6 +411,7 @@ def create_app(on_config_saved=None) -> Flask:
             ("dingtalk", "dingtalk_webhook_url"),
             ("feishu", "feishu_webhook_url"),
             ("bark", "bark_url"),
+            ("gotify", "gotify_url"),
             ("pushplus", "pushplus_params"),
         ]:
             for url in _split_urls(raw.get(key, "")):
@@ -480,7 +482,7 @@ def create_app(on_config_saved=None) -> Flask:
         for ch in channels:
             ch_type = ch.get("type")
             url = (ch.get("url") or "").strip()
-            if ch_type not in {"wechat", "dingtalk", "feishu", "bark", "pushplus"}:
+            if ch_type not in {"wechat", "dingtalk", "feishu", "bark", "gotify", "pushplus"}:
                 return jsonify({"ok": False, "message": "存在未知的推送渠道类型。"}), 400
             if not url:
                 return jsonify({"ok": False, "message": "推送渠道地址不能为空。"}), 400
@@ -519,6 +521,7 @@ def create_app(on_config_saved=None) -> Flask:
         dingtalk_urls = []
         feishu_urls = []
         bark_urls = []
+        gotify_urls = []
         pushplus_urls = []
         for ch in channels:
             ch_type = ch.get("type")
@@ -531,6 +534,8 @@ def create_app(on_config_saved=None) -> Flask:
                 feishu_urls.append(url)
             elif ch_type == "bark":
                 bark_urls.append(url)
+            elif ch_type == "gotify":
+                gotify_urls.append(url)
             elif ch_type == "pushplus":
                 pushplus_urls.append(url)
 
@@ -541,6 +546,7 @@ def create_app(on_config_saved=None) -> Flask:
                 "dingtalk_webhook_url": _join_urls(dingtalk_urls),
                 "feishu_webhook_url": _join_urls(feishu_urls),
                 "bark_url": _join_urls(bark_urls),
+                "gotify_url": _join_urls(gotify_urls),
                 "pushplus_params": _join_urls(pushplus_urls),
                 "monitor_events": events,
                 "log_retention_days": log_retention_days,
@@ -582,6 +588,7 @@ def create_app(on_config_saved=None) -> Flask:
                 dingtalk_webhook_url=raw.get("dingtalk_webhook_url", ""),
                 feishu_webhook_url=raw.get("feishu_webhook_url", ""),
                 bark_url=raw.get("bark_url", ""),
+                gotify_url=raw.get("gotify_url", ""),
                 pushplus_params=raw.get("pushplus_params", ""),
                 title_prefix=_title_prefix_from_dict(raw),
                 dedup_window=int(raw.get("dedup_window", 300)),
@@ -1506,6 +1513,13 @@ def create_app(on_config_saved=None) -> Flask:
     }
 
     const PUSHPLUS_PLACEHOLDER = '{"token":"你的token","title":"{title}","content":"消息内容","template":"html","channel":"wechat"}';
+    const GOTIFY_PLACEHOLDER = "例如：http://127.0.0.1:8008/message?token=你的应用Token";
+
+    function getChannelPlaceholder(channelType) {
+      if (channelType === "pushplus") return PUSHPLUS_PLACEHOLDER;
+      if (channelType === "gotify") return GOTIFY_PLACEHOLDER;
+      return "例如：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...";
+    }
 
     function createChannelRow(chType, url) {
       const tr = document.createElement("tr");
@@ -1522,9 +1536,9 @@ def create_app(on_config_saved=None) -> Flask:
       tdType.appendChild(sel);
 
       const tdUrl = document.createElement("td");
-      function setUrlWidget(isPushPlus, val) {
+      function setUrlWidget(channelType, val) {
         tdUrl.innerHTML = "";
-        if (isPushPlus) {
+        if (channelType === "pushplus") {
           const ta = document.createElement("textarea");
           ta.rows = 3;
           ta.placeholder = PUSHPLUS_PLACEHOLDER;
@@ -1534,17 +1548,17 @@ def create_app(on_config_saved=None) -> Flask:
         } else {
           const inp = document.createElement("input");
           inp.type = "text";
-          inp.placeholder = "例如：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...";
+          inp.placeholder = getChannelPlaceholder(channelType);
           inp.value = val || "";
           tdUrl.appendChild(inp);
         }
       }
-      setUrlWidget(chType === "pushplus", url || "");
+      setUrlWidget(chType, url || "");
 
       sel.addEventListener("change", function() {
         const prev = tdUrl.querySelector("input[type=text], textarea");
         const prevVal = prev ? prev.value : "";
-        setUrlWidget(sel.value === "pushplus", prevVal);
+        setUrlWidget(sel.value, prevVal);
       });
 
       const tdOp = document.createElement("td");
@@ -1840,4 +1854,3 @@ if __name__ == "__main__":
     port = int(os.getenv("UI_PORT", "18080"))
     print(f"配置 UI: http://127.0.0.1:{port}")
     app.run(host="0.0.0.0", port=port, debug=True)
-

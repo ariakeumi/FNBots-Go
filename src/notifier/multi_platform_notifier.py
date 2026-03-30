@@ -1,6 +1,6 @@
 """
 多平台通知器
-支持企业微信、钉钉和飞书的WebHook通知
+支持企业微信、钉钉、飞书、Bark、Gotify 和 PushPlus 通知
 """
 
 import json
@@ -240,6 +240,7 @@ class MultiPlatformNotifier:
                  dingtalk_webhook_url: str = "",
                  feishu_webhook_url: str = "",
                  bark_url: str = "",
+                 gotify_url: str = "",
                  pushplus_params: str = "",
                  title_prefix: str = "飞牛NAS",
                  dedup_window: int = 300,
@@ -254,6 +255,7 @@ class MultiPlatformNotifier:
             dingtalk_webhook_url: 钉钉Webhook URL
             feishu_webhook_url: 飞书Webhook URL
             bark_url: Bark推送URL
+            gotify_url: Gotify 推送URL（/message?token=...）
             pushplus_params: PushPlus 参数（JSON 字符串，多个用 | 分隔）
             dedup_window: 去重时间窗口（秒）
             pool_size: 连接池大小
@@ -264,6 +266,7 @@ class MultiPlatformNotifier:
         self.dingtalk_webhook_url = dingtalk_webhook_url
         self.feishu_webhook_url = feishu_webhook_url
         self.bark_url = bark_url
+        self.gotify_url = gotify_url
         self.pushplus_params = pushplus_params or ""
         if not isinstance(title_prefix, str):
             self.title_prefix = "飞牛NAS"
@@ -313,6 +316,8 @@ class MultiPlatformNotifier:
             platforms.append('飞书')
         if self.bark_url:
             platforms.append('Bark')
+        if self.gotify_url:
+            platforms.append('Gotify')
         if self.pushplus_params:
             platforms.append('PushPlus')
 
@@ -365,6 +370,7 @@ class MultiPlatformNotifier:
                     'dingtalk': bool(self.dingtalk_webhook_url),
                     'feishu': bool(self.feishu_webhook_url),
                     'bark': bool(self.bark_url),
+                    'gotify': bool(self.gotify_url),
                     'pushplus': bool(self.pushplus_params),
                 }
             }
@@ -457,6 +463,11 @@ class MultiPlatformNotifier:
             results.append(ok)
             channel_results.append(cr)
             self.logger.debug("合并事件-Bark: %s", cr)
+        if self.gotify_url:
+            ok, cr = self._send_to_gotify(message, event_type)
+            results.append(ok)
+            channel_results.append(cr)
+            self.logger.debug("合并事件-Gotify: %s", cr)
         if self.pushplus_params:
             pushplus_message = self._build_bark_message(event_type, merged_data, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '')
             ok, cr = self._send_to_pushplus(pushplus_message)
@@ -532,6 +543,11 @@ class MultiPlatformNotifier:
             results.append(ok)
             channel_results.append(cr)
             self.logger.debug("Bark通知发送结果: %s", cr)
+        if self.gotify_url:
+            ok, cr = self._send_to_gotify(message, event_type)
+            results.append(ok)
+            channel_results.append(cr)
+            self.logger.debug("Gotify通知发送结果: %s", cr)
         if self.pushplus_params:
             pushplus_message = self._build_bark_message(event_type, event_data, timestamp, raw_log)
             ok, cr = self._send_to_pushplus(pushplus_message)
@@ -635,6 +651,20 @@ class MultiPlatformNotifier:
             results.append(self.connection_pool.get(bark_push_url))
         any_ok = any(r.get("success") for r in results)
         return any_ok, self._channel_result("Bark", results)
+
+    def _send_to_gotify(self, message: MultiPlatformMessage, event_type: str) -> tuple:
+        """发送到 Gotify。返回 (是否有任一成功, 渠道结果 dict)。"""
+        urls = self._iter_urls(self.gotify_url)
+        if not urls:
+            return False, {"channel": "Gotify", "success": False, "response": None, "error": "未配置"}
+        payload = {
+            "title": message.title,
+            "message": message.content,
+            "priority": self._gotify_priority(event_type),
+        }
+        results = [self.connection_pool.post(url, payload) for url in urls]
+        any_ok = any(r.get("success") for r in results)
+        return any_ok, self._channel_result("Gotify", results)
 
     def _send_to_pushplus(self, message: MultiPlatformMessage) -> tuple:
         """发送到 PushPlus。返回 (是否有任一成功, 渠道结果 dict)。"""
@@ -741,6 +771,23 @@ class MultiPlatformNotifier:
         
         # 使用MD5生成固定长度的指纹
         return hashlib.md5(key.encode()).hexdigest()
+
+    def _gotify_priority(self, event_type: str) -> int:
+        """为 Gotify 生成简易优先级。"""
+        high_priority_events = {
+            'LoginFail', 'SSH_INVALID_USER', 'SSH_AUTH_FAILED',
+            'APP_CRASH', 'APP_UPDATE_FAILED',
+            'APP_START_FAILED_LOCAL_APP_RUN_EXCEPTION',
+            'APP_AUTO_START_FAILED_DOCKER_NOT_AVAILABLE',
+            'CPU_USAGE_ALARM', 'CPU_TEMPERATURE_ALARM',
+            'UPS_ONBATT_LOWBATT', 'DISK_IO_ERR', 'APP_ERROR',
+        }
+        low_priority_events = {'APP_START', 'APP_STOP', 'TEST_PUSH', 'DND_SUMMARY'}
+        if event_type in high_priority_events:
+            return 8
+        if event_type in low_priority_events:
+            return 2
+        return 5
     
     def _is_duplicate(self, fingerprint: str) -> bool:
         """检查是否为重复事件"""
@@ -1272,6 +1319,10 @@ class MultiPlatformNotifier:
             ok, cr = self._send_to_bark(multi_msg)
             results.append(ok)
             self.logger.debug("Bark系统通知: %s", cr)
+        if self.gotify_url:
+            ok, cr = self._send_to_gotify(multi_msg, event_type)
+            results.append(ok)
+            self.logger.debug("Gotify系统通知: %s", cr)
         if self.pushplus_params:
             ok, cr = self._send_to_pushplus(multi_msg)
             results.append(ok)
@@ -1339,6 +1390,7 @@ class MultiPlatformNotifier:
             'has_wechat_webhook': bool(self.wechat_webhook_url),
             'has_dingtalk_webhook': bool(self.dingtalk_webhook_url),
             'has_feishu_webhook': bool(self.feishu_webhook_url),
+            'has_gotify_url': bool(self.gotify_url),
             'disk_wakeup_cache_size': len(self.disk_wakeup_cache),
             'disk_spindown_cache_size': len(self.disk_spindown_cache),
             'merge_window': self.merge_window,
@@ -1347,7 +1399,9 @@ class MultiPlatformNotifier:
             'dingtalk_webhook_url': self.dingtalk_webhook_url[:50] + '...' 
                 if len(self.dingtalk_webhook_url) > 50 else self.dingtalk_webhook_url,
             'feishu_webhook_url': self.feishu_webhook_url[:50] + '...' 
-                if len(self.feishu_webhook_url) > 50 else self.feishu_webhook_url
+                if len(self.feishu_webhook_url) > 50 else self.feishu_webhook_url,
+            'gotify_url': self.gotify_url[:50] + '...'
+                if len(self.gotify_url) > 50 else self.gotify_url,
         }
     
     def close(self):
