@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY_IMAGE: ${{ vars.DOCKERHUB_IMAGE || 'sunanang/fn-message-bots' }}
+  REGISTRY_IMAGE: ${{ vars.DOCKERHUB_IMAGE || 'q000q000/fn-message-bots' }}
 
 jobs:
   docker:
